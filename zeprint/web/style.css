@@ -102,6 +102,11 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px s
 input:invalid:not(:placeholder-shown) { border-color: var(--bad); }
 .field-help { font-weight: 400; color: var(--muted); font-size: .78rem; margin-top: 3px; display: block; }
 .params { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 14px; margin: 16px 0; }
+.params .wide { grid-column: 1 / -1; }
+.params textarea { resize: vertical; min-height: 5.5em; font-family: inherit; }
+.file-row { display: flex; gap: 8px; align-items: center; margin-top: 5px; }
+.file-row input { margin-top: 0; }
+.file-row input[type=file] { width: auto; max-width: 45%; padding: 6px; }
 .row3, .grid3 { display: grid; grid-template-columns: 1.4fr 1fr .6fr; gap: 12px; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .grid3 { grid-template-columns: 1fr 1fr 1fr; }

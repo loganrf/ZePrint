@@ -131,7 +131,9 @@ class FakeNet:
         if "tidesandcurrents" in host:
             if "/mdapi/" in url:
                 return json.dumps({"stations": [{"name": "Seattle", "lat": 47.6026,
-                                                 "lng": -122.3393}]}).encode()
+                                                 "lng": -122.3393, "timezone": "PST",
+                                                 "timezonecorr": -8,
+                                                 "observedst": True}]}).encode()
             date = dt.datetime.strptime(qs["begin_date"][0], "%Y%m%d").date()
             if qs["product"][0] == "water_level":
                 return json.dumps({"data": [{"t": f"{date} 10:24", "v": "7.412"}]}).encode()
@@ -146,3 +148,48 @@ class FakeNet:
         if m:
             return terrarium_tile(*map(int, m.groups()))
         raise FetchError(f"unexpected URL in test: {url}")
+
+
+def carrier_label_png(w: int = 1200, h: int = 1800) -> bytes:
+    """A portrait 4x6 'carrier' label at any pixel size: frame, service block,
+    rule, text and a barcode-like bar pattern (all proportional)."""
+    from PIL import ImageDraw
+    img = Image.new("L", (w, h), 255)
+    d = ImageDraw.Draw(img)
+    u = w / 1200                                                 # 1200 px = design width
+    d.rectangle([10 * u, 10 * u, w - 11 * u, h - 11 * u], outline=0, width=max(2, int(6 * u)))
+    d.rectangle([10 * u, 10 * u, 300 * u, 300 * u], fill=0)      # service-class block
+    d.line([10 * u, 420 * u, w - 11 * u, 420 * u], fill=0, width=max(2, int(5 * u)))
+    d.text((340 * u, 60 * u), "PRIORITY", fill=0)
+    x = 120 * u
+    for i in range(60):                                          # 'barcode'
+        bw = (4 + (i * 7919) % 3 * 4) * u
+        if i % 2 == 0:
+            d.rectangle([x, 900 * u, x + bw, 1300 * u], fill=0)
+        x += bw
+    return _png(img)
+
+
+def _png(img) -> bytes:
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def letter_pdf_with_label(pages: int = 1) -> bytes:
+    """Letter-size PDF pages with a *landscape* 6x4 label in the top half and an
+    instruction block below - the Click-N-Ship style layout."""
+    from PIL import ImageDraw
+    dpi = 100
+    out = []
+    for n in range(pages):
+        page = Image.new("L", (int(8.5 * dpi), 11 * dpi), 255)
+        label = Image.open(io.BytesIO(carrier_label_png(400, 600))).rotate(90, expand=True)
+        page.paste(label, (125, 60))
+        d = ImageDraw.Draw(page)
+        d.text((125, 600), f"Page {n + 1} - fold here - instructions and receipt", fill=0)
+        d.rectangle([125, 640, 725, 1000], outline=0, width=2)
+        out.append(page.convert("RGB"))
+    buf = io.BytesIO()
+    out[0].save(buf, format="PDF", resolution=dpi, save_all=True, append_images=out[1:])
+    return buf.getvalue()

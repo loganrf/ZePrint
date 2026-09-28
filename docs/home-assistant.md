@@ -12,7 +12,7 @@ this to ZePrint's environment:
 MQTT_HOST: 192.168.1.10        # your broker
 MQTT_USERNAME: zeprint         # if the broker needs auth
 MQTT_PASSWORD: secret
-ZEPRINT_URL: http://192.168.1.20:8080   # optional: "Visit device" link in HA
+ZEPRINT_URL: http://192.168.1.20:3231   # optional: "Visit device" link in HA
 ```
 
 HA then shows a **ZePrint** device with:
@@ -55,6 +55,27 @@ automation:
           topic: zeprint/print/weather
           payload: '{"hours_ahead": 12}'
 
+  - alias: Return address labels on demand (2x1)
+    triggers:
+      - trigger: state
+        entity_id: input_button.return_address_labels
+    actions:
+      - action: mqtt.publish
+        data:
+          topic: zeprint/print/address
+          payload: '{"include": "from", "size": "2x1", "copies": 10}'
+
+  - alias: Print a shipping label from a URL
+    # e.g. fired by a script that receives a label link from your shop
+    triggers:
+      - trigger: event
+        event_type: shipping_label_ready
+    actions:
+      - action: mqtt.publish
+        data:
+          topic: zeprint/print/image
+          payload: '{"image": "{{ trigger.event.data.url }}", "pages": "all"}'
+
   - alias: Tell me when the printer runs out of labels
     triggers:
       - trigger: state
@@ -84,7 +105,7 @@ This needs no broker. In `configuration.yaml`:
 ```yaml
 rest_command:
   zeprint_print:
-    url: "http://zeprint.local:8080/api/labels/{{ label }}/print"
+    url: "http://zeprint.local:3231/api/labels/{{ label }}/print"
     method: POST
     content_type: application/json
     # headers:
@@ -111,7 +132,7 @@ or an Image entity:
 
 ```yaml
 # Settings → Devices & services → Add → Generic Camera
-still_image_url: http://zeprint.local:8080/api/labels/tides/preview.png?size=2x1
+still_image_url: http://zeprint.local:3231/api/labels/tides/preview.png?size=2x1
 ```
 
 (With `ZEPRINT_API_TOKEN` set, add `&token=…`.)

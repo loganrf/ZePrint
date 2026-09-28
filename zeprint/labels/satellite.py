@@ -436,6 +436,7 @@ class SatelliteLabel(Label):
     description = "Ground track, orbit and launch facts for a NORAD catalog number (CelesTrak)."
     icon = "mdi:satellite-variant"
     Params = SatelliteParams
+    fetch_outside_lock = True
 
     def render(self, p: SatelliteParams, ctx: RenderContext) -> RenderResult:
         catnr = p.norad.lstrip("0") or "0"
@@ -453,11 +454,12 @@ class SatelliteLabel(Label):
         report, meta = build_report(name, catnr, l1, sc, elem, now, epoch, when)
 
         z = ctx.zpl()
-        if ctx.size.id == "2x1":
-            layout_2x1(z, name, catnr, meta, elem, now, when, page_url)
-        else:
-            layout_4x6(z, ctx, name, catnr, meta, elem, now, epoch, when, prop["track"],
-                       page_url, minutes)
+        with ctx.drawing():
+            if ctx.size.id == "2x1":
+                layout_2x1(z, name, catnr, meta, elem, now, when, page_url)
+            else:
+                layout_4x6(z, ctx, name, catnr, meta, elem, now, epoch, when, prop["track"],
+                           page_url, minutes)
         la, lo, al, spd = now
         data = {"name": name, "norad": catnr, "intl": meta["intl"], "lat": round(la, 4),
                 "lon": round(lo, 4), "alt_km": round(al, 1), "speed_km_s": round(spd, 3),

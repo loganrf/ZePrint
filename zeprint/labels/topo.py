@@ -327,6 +327,7 @@ class TopoLabel(Label):
     description = "Contour map for a bounding box, with scale, coordinates and a CalTopo QR."
     icon = "mdi:terrain"
     Params = TopoParams
+    fetch_outside_lock = True
 
     def render(self, p: TopoParams, ctx: RenderContext) -> RenderResult:
         (la1, lo1), (la2, lo2) = parse_latlon(p.corner1), parse_latlon(p.corner2)
@@ -342,10 +343,11 @@ class TopoLabel(Label):
         caltopo = p.qr_url or CALTOPO.format(lat=clat, lon=clon, z=min(16, zoom + 2))
 
         z = ctx.zpl()
-        if ctx.size.id == "2x1":
-            info = layout_2x1(z, ctx, elev, cov, p, caltopo)
-        else:
-            info = layout_4x6(z, ctx, elev, cov, p, caltopo)
+        with ctx.drawing():
+            if ctx.size.id == "2x1":
+                info = layout_2x1(z, ctx, elev, cov, p, caltopo)
+            else:
+                info = layout_4x6(z, ctx, elev, cov, p, caltopo)
         data = {"bbox": {"south": cov[0], "west": cov[1], "north": cov[2], "east": cov[3]},
                 "zoom": zoom, "interval": info["ci"], "units": info["units"],
                 "elev_min": round(info["lo"], 1), "elev_max": round(info["hi"], 1),

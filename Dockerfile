@@ -20,9 +20,10 @@ RUN mkdir zeprint && touch zeprint/__init__.py \
 COPY zeprint ./zeprint
 RUN pip install --no-deps . \
  && rm -rf build *.egg-info \
- # warm matplotlib's font cache so the first label isn't slow
+ # warm matplotlib's font cache so the first label isn't slow; world-writable
+ # because the runtime user (PUID) isn't the build user
  && python -c "import matplotlib.figure, matplotlib.font_manager" \
- && chmod -R a+rX "$MPLCONFIGDIR" \
+ && chmod -R a+rwX "$MPLCONFIGDIR" \
  && useradd --system --uid 1000 --user-group --home-dir /data --no-create-home zeprint \
  && mkdir -p /data && chown zeprint:zeprint /data
 

@@ -15,13 +15,15 @@ from typing import Any, Callable
 
 from pydantic import BaseModel, ValidationError
 
-from . import labels
+from . import labels, net
 from .config import ConfigStore, PrinterConfig, Settings
-from .errors import InvalidRequest, NotFoundError, PrinterError
+from .errors import InvalidRequest, LabelError, NotFoundError, PrinterError
 from .events import EventBus
 from .jobs import Job, JobQueue
 from .labels import Label, RenderContext, RenderResult
 from .printing import open_transport, parse_host_identification, parse_host_status
+from .uploads import ID_RE as UPLOAD_ID_RE
+from .uploads import UploadStore, sniff
 from .zpl import SIZES, LabelSize, calibrate_zpl, get_size, render_png
 
 log = logging.getLogger(__name__)
@@ -48,11 +50,11 @@ class ZePrint:
         self.events = EventBus()
         self.config = ConfigStore(self.data_dir / "config.json", env)
         self.jobs = JobQueue(self.events)
+        self.uploads = UploadStore(self.data_dir / "uploads")
         labels.load_builtin()
         plugins = plugin_dir or env.get("ZEPRINT_PLUGIN_DIR") or self.data_dir / "plugins"
         self.plugins = labels.load_plugins(plugins)
         self.clock: Callable[[], datetime] | None = None   # tests pin "now" here
-        self._render_lock = threading.Lock()       # matplotlib is not re-entrant
         self._printer_locks: dict[str, threading.Lock] = defaultdict(threading.Lock)
 
     @classmethod
@@ -92,7 +94,9 @@ class ZePrint:
         return self.settings.printer()
 
     def save_printer(self, printer: PrinterConfig, replace_id: str | None = None,
-                     make_default: bool = False) -> PrinterConfig:
+                     make_default: bool | None = None) -> PrinterConfig:
+        """Add (or replace ``replace_id`` with) a printer. ``make_default``: True makes it
+        the default, False hands the default to another printer, None leaves it."""
         def fn(s: Settings):
             if replace_id is not None:
                 idx = next((i for i, p in enumerate(s.printers) if p.id == replace_id), None)
@@ -109,9 +113,15 @@ class ZePrint:
                 s.printers.append(printer)
             if make_default or len(s.printers) == 1:
                 s.default_printer = printer.id
+            elif make_default is False and s.default_printer == printer.id:
+                s.default_printer = next(p.id for p in s.printers if p.id != printer.id)
             return s
         self.update_settings(fn)
         return printer
+
+    def _current(self, printer: PrinterConfig) -> PrinterConfig:
+        """The latest config for a queued job's printer (edited since, or as queued)."""
+        return next((p for p in self.settings.printers if p.id == printer.id), printer)
 
     def delete_printer(self, printer_id: str) -> None:
         def fn(s: Settings):
@@ -176,11 +186,15 @@ class ZePrint:
         return sz
 
     def render(self, label_id: str, params: dict[str, Any] | None = None, *,
-               printer_id: str | None = None, size: str | None = None, dpi: int | None = None,
-               copies: int = 1, now: datetime | None = None) -> RenderResult:
-        """Render a label. Without a printer it previews at 4x6 / 300 dpi."""
+               printer_id: str | None = None, printer: PrinterConfig | None = None,
+               size: str | None = None, dpi: int | None = None, copies: int = 1,
+               now: datetime | None = None) -> RenderResult:
+        """
+        Render a label for ``printer`` (a config) or ``printer_id`` (default printer if
+        neither). Without any printer it previews at 4x6 / 300 dpi.
+        """
         label = self.label(label_id)
-        printer = self._printer_or_none(printer_id)
+        printer = printer or self._printer_or_none(printer_id)
         sz = self._resolve_size(label, size, printer)
         p = self.label_params(label, params)
         ctx = RenderContext(
@@ -188,14 +202,27 @@ class ZePrint:
             darkness=printer.darkness if printer else 22, speed=printer.speed if printer else 2,
             media=printer.media if printer else "direct", copies=copies,
             tz=self.config.timezone(), now=now or (self.clock() if self.clock else None),
-            cache_dir=self.cache_dir,
+            cache_dir=self.cache_dir, open_file=self.open_file,
             printer_name=printer.name if printer else None)
-        with self._render_lock:
+        if label.fetch_outside_lock:          # label takes ctx.drawing() around its plots
+            return label.render(p, ctx)
+        with ctx.drawing():
             return label.render(p, ctx)
 
     @staticmethod
     def preview_png(zpl: str) -> bytes:
         return render_png(zpl)
+
+    def open_file(self, ref: str) -> tuple[bytes, dict[str, Any]]:
+        """A label's file reference: an upload id, or an http(s) URL to fetch."""
+        ref = ref.strip()
+        if UPLOAD_ID_RE.match(ref):
+            return self.uploads.get(ref)
+        if ref.startswith(("http://", "https://")):
+            data = net.fetch(ref, timeout=30, ttl=300, max_bytes=self.uploads.max_bytes)
+            name = ref.split("?", 1)[0].rstrip("/").rsplit("/", 1)[-1] or None
+            return data, {"filename": name, "content_type": sniff(data), "url": ref}
+        raise LabelError("expected an upload id (POST /api/uploads) or an http(s) URL")
 
     # -------------------------------------------------------------- printing
 
@@ -219,10 +246,10 @@ class ZePrint:
                   size=sz.id, copies=copies, params=p.model_dump(mode="json"), source=source)
 
         def work(progress):
-            result = self.render(label.id, params, printer_id=printer.id, size=sz.id,
-                                 copies=copies)
+            target = self._current(printer)
+            result = self.render(label.id, params, printer=target, size=sz.id, copies=copies)
             progress("sending")
-            return self.send(self.printer(printer.id), result.zpl, result.title)
+            return self.send(target, result.zpl, result.title)
         return self.jobs.submit(job, work)
 
     def print_raw(self, zpl: str | bytes, printer_id: str | None = None, title: str = "raw ZPL",
@@ -234,7 +261,7 @@ class ZePrint:
 
         def work(progress):
             progress("sending")
-            return self.send(self.printer(printer.id), zpl, title)
+            return self.send(self._current(printer), zpl, title)
         return self.jobs.submit(job, work)
 
     def calibrate(self, printer_id: str | None = None, size: str | None = None,
@@ -274,7 +301,7 @@ class ZePrint:
                     out["identity"] = parse_host_identification(ident)
                 except ValueError:
                     pass
-        except PrinterError as e:
+        except (PrinterError, OSError) as e:
             return {**out, "online": False, "state": "offline", "error": str(e)}
         except ValueError as e:
             return {**out, "online": True, "state": "unknown", "error": str(e)}

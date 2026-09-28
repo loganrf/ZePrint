@@ -94,14 +94,20 @@ def compress_hex(data: bytes, row_bytes: int) -> str:
 def decompress_hex(data: str, row_bytes: int, total: int) -> bytes:
     """
     Inverse of :func:`compress_hex`; also accepts plain or unwrapped hex.
-    Used by the preview renderer.
+    Used by the preview renderer. Output is bounded by ``total`` bytes no matter
+    what repeat counts the input claims.
     """
+    if row_bytes <= 0 or total <= 0:
+        return b""
     nib = row_bytes * 2
+    max_rows = -(-total // row_bytes)
     rows: list[str] = []
     prev = "0" * nib
     cur = ""
     n = 0
     for c in data:
+        if len(rows) >= max_rows:
+            break
         if c.isspace():
             continue
         if c in _HI:
@@ -120,13 +126,14 @@ def decompress_hex(data: str, row_bytes: int, total: int) -> bytes:
         elif c == "!":
             cur += "F" * (nib - len(cur))
         else:
-            cur += c * (n or 1)
+            budget = (max_rows - len(rows)) * nib - len(cur)
+            cur += c * min(n or 1, budget)
         n = 0
         while len(cur) >= nib:
             prev = cur[:nib]
             rows.append(prev)
             cur = cur[nib:]
-    if cur:
+    if cur and len(rows) < max_rows:
         rows.append(cur.ljust(nib, "0"))
-    raw = bytes.fromhex("".join(rows))
+    raw = bytes.fromhex("".join(rows[:max_rows]))
     return raw[:total].ljust(total, b"\x00")

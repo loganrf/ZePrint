@@ -314,6 +314,7 @@ class WeatherLabel(Label):
     description = "Current conditions and outlook for home, plus the day's wind at a marina."
     icon = "mdi:weather-partly-cloudy"
     Params = WeatherParams
+    fetch_outside_lock = True
 
     def render(self, p: WeatherParams, ctx: RenderContext) -> RenderResult:
         home_ll = [float(v) for v in p.home.split(",")]
@@ -327,10 +328,11 @@ class WeatherLabel(Label):
 
         z = ctx.zpl()
         stats = None
-        if ctx.size.id == "2x1":
-            layout_2x1(z, ctx, p, home, marina, local_now(marina, ctx), tzabbr)
-        else:
-            stats = layout_4x6(z, ctx, p, home, marina, now, tzabbr)
+        with ctx.drawing():
+            if ctx.size.id == "2x1":
+                layout_2x1(z, ctx, p, home, marina, local_now(marina, ctx), tzabbr)
+            else:
+                stats = layout_4x6(z, ctx, p, home, marina, now, tzabbr)
         c = home["current"]
         data = {"location": p.home_name, "temperature": c["temperature_2m"],
                 "apparent_temperature": c["apparent_temperature"],

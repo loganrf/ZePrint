@@ -169,7 +169,7 @@ class ZPL:
     # ------------------------------------------------------------------ output
 
     def header(self) -> list[str]:
-        return [f"~SD{self.darkness}", "^XA", "^CI28", f"^PW{self.pw}", f"^LL{self.ll}",
+        return [f"~SD{self.darkness:02d}", "^XA", "^CI28", f"^PW{self.pw}", f"^LL{self.ll}",
                 "^LH0,0", media_command(self.media), "^MNY", f"^PR{self.speed}"]
 
     def build(self) -> str:

@@ -18,6 +18,7 @@ dependencies = [
     "pillow>=10",
     "sgp4>=2.22",
     "qrcode>=7.4",
+    "pypdfium2>=4.30",
     "paho-mqtt>=2.0",
     "certifi",
     "tzdata",

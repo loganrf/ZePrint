@@ -23,31 +23,21 @@ from typing import Any, Literal, Optional
 from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
+from starlette.concurrency import run_in_threadpool
 
 from . import __version__, labels
 from .config import PrinterConfig, Settings, valid_timezone
 from .errors import InvalidRequest, ZePrintError
 from .jobs import Job
+from .schemas import LabelRequest
 from .service import ZePrint, format_validation
 from .zpl import DPIS, get_size, render_png
 
 log = logging.getLogger(__name__)
 
 _RESERVED = {"params", "printer", "size", "dpi", "copies", "token"}
-
-
-class LabelRequest(BaseModel):
-    model_config = ConfigDict(extra="allow")
-
-    params: dict[str, Any] = Field(default_factory=dict, description="Label parameters")
-    printer: Optional[str] = Field(None, description="Printer id (default printer if omitted)")
-    size: Optional[str] = Field(None, description="4x6 or 2x1 (printer's loaded stock if omitted)")
-    dpi: Optional[Literal[203, 300, 600]] = Field(None, description="Override DPI (render only)")
-    copies: int = Field(1, ge=1, le=100)
-
-    def merged(self) -> dict[str, Any]:
-        return {**(self.model_extra or {}), **self.params}
+MAX_BODY = 32 << 20          # raw ZPL / preview uploads
 
 
 class SettingsPatch(BaseModel):
@@ -69,7 +59,18 @@ class PrinterPatch(BaseModel):
     default: Optional[bool] = None
 
 
+async def _read_body(request: Request) -> bytes:
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > MAX_BODY:
+        raise HTTPException(413, f"body larger than {MAX_BODY >> 20} MiB")
+    data = await request.body()
+    if len(data) > MAX_BODY:
+        raise HTTPException(413, f"body larger than {MAX_BODY >> 20} MiB")
+    return data
+
+
 def _job_response(svc: ZePrint, job: Job, wait: float) -> JSONResponse:
+    """Blocks while waiting - call from sync endpoints or via run_in_threadpool."""
     if wait:
         job = svc.jobs.wait(job.id, wait)
     code = {"done": 200, "error": 502}.get(job.status, 202)
@@ -247,8 +248,8 @@ def create_app(service: ZePrint | None = None, *, token: str | None = None,
 
     @api.post("/printers", status_code=201)
     def add_printer(body: dict[str, Any] = Body(...)):
-        make_default = bool(body.pop("default", False))
         try:
+            make_default = TypeAdapter(bool).validate_python(body.pop("default", False))
             printer = PrinterConfig.model_validate(body)
         except ValidationError as e:
             raise InvalidRequest(format_validation(e)) from None
@@ -259,7 +260,7 @@ def create_app(service: ZePrint | None = None, *, token: str | None = None,
     def patch_printer(printer_id: str, patch: PrinterPatch):
         current = svc.printer(printer_id).model_dump()
         changes = patch.model_dump(exclude_unset=True)
-        make_default = bool(changes.pop("default", False))
+        make_default = changes.pop("default", None)       # None = leave as is
         try:
             printer = PrinterConfig.model_validate({**current, **changes})
         except ValidationError as e:
@@ -291,8 +292,61 @@ def create_app(service: ZePrint | None = None, *, token: str | None = None,
     async def printer_raw(printer_id: str, request: Request,
                           wait: float = Query(0, ge=0, le=300)):
         """Send the request body to the printer untouched (ZPL, EPL, SGD commands...)."""
-        data = await request.body()
-        return _job_response(svc, svc.print_raw(data, printer_id, title="raw ZPL"), wait)
+        data = await _read_body(request)
+        job = svc.print_raw(data, printer_id, title="raw ZPL")
+        return await run_in_threadpool(_job_response, svc, job, wait)
+
+    # --------------------------------------------------------------- uploads
+
+    @api.post("/uploads", status_code=201)
+    async def upload(request: Request, filename: Optional[str] = None):
+        """Store a PDF or image (raw request body) for the image label; returns its id.
+        e.g. curl --data-binary @label.pdf -H 'X-Filename: label.pdf' .../api/uploads"""
+        data = await _read_body(request)
+        name = filename or request.headers.get("x-filename")
+        return await run_in_threadpool(svc.uploads.put, data, name)
+
+    @api.get("/uploads")
+    def list_uploads():
+        return svc.uploads.list()
+
+    @api.get("/uploads/{upload_id}")
+    def get_upload(upload_id: str):
+        return svc.uploads.meta(upload_id)
+
+    @api.get("/uploads/{upload_id}/file", response_class=Response)
+    def get_upload_file(upload_id: str):
+        data, meta = svc.uploads.get(upload_id)
+        return Response(data, media_type=meta["content_type"])
+
+    @api.delete("/uploads/{upload_id}", status_code=204)
+    def delete_upload(upload_id: str):
+        svc.uploads.delete(upload_id)
+        return Response(status_code=204)
+
+    @api.post("/print-file")
+    async def print_file(request: Request):
+        """
+        One shot: upload the request body (PDF/image) and print it with the image
+        label. Query string: printer, size, copies, wait, and any image-label
+        parameter (pages, rotate, trim, crop, fit, dither, threshold, margin).
+        e.g. curl --data-binary @label.pdf '.../api/print-file?pages=all&wait=30'
+        """
+        data = await _read_body(request)
+        q = {k: v for k, v in request.query_params.items() if k != "token"}
+        try:
+            wait = float(q.pop("wait", 0) or 0)
+            copies = int(q.pop("copies", 1) or 1)
+        except ValueError:
+            raise InvalidRequest("wait and copies must be numbers") from None
+        if not 0 <= wait <= 300 or not 1 <= copies <= 100:
+            raise InvalidRequest("wait must be 0-300 and copies 1-100")
+        printer, size = q.pop("printer", None), q.pop("size", None)
+        name = q.pop("filename", None) or request.headers.get("x-filename")
+        meta = await run_in_threadpool(svc.uploads.put, data, name)
+        job = svc.print_label("image", {**q, "image": meta["id"]}, printer_id=printer,
+                              size=size, copies=copies)
+        return await run_in_threadpool(_job_response, svc, job, wait)
 
     # ------------------------------------------------------------------ zpl
 
@@ -300,7 +354,7 @@ def create_app(service: ZePrint | None = None, *, token: str | None = None,
               responses={200: {"content": {"image/png": {}}}})
     async def zpl_preview(request: Request, size: str = "4x6", dpi: int = 300):
         """Preview arbitrary ZPL. size/dpi only matter when it has no ^PW/^LL."""
-        zpl = (await request.body()).decode("utf-8", "replace")
+        zpl = (await _read_body(request)).decode("utf-8", "replace")
         if "^XA" not in zpl.upper():
             raise InvalidRequest("that doesn't look like ZPL (no ^XA)")
         if dpi not in DPIS:
@@ -309,7 +363,8 @@ def create_app(service: ZePrint | None = None, *, token: str | None = None,
             dots = get_size(size).dots(dpi)
         except ValueError as e:
             raise InvalidRequest(str(e)) from None
-        return Response(render_png(zpl, dots), media_type="image/png")
+        png = await run_in_threadpool(render_png, zpl, dots)
+        return Response(png, media_type="image/png")
 
     app.include_router(public)
     app.include_router(api)
