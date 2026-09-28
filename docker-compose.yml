@@ -1,0 +1,25 @@
+services:
+  zeprint:
+    build: .
+    image: zeprint:latest
+    container_name: zeprint
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data                  # config.json, caches, plugins/
+    environment:
+      TZ: America/Los_Angeles         # "now" markers, generated-at stamps
+      # First-run printer: the networked GX430t on its raw port. After the
+      # first start, manage printers (address, DPI, label size) in the web UI.
+      ZEPRINT_PRINTER_URI: tcp://192.168.1.50:9100
+      ZEPRINT_PRINTER_NAME: Zebra GX430t
+      ZEPRINT_PRINTER_DPI: "300"
+      ZEPRINT_LABEL_SIZE: 4x6         # or 2x1
+      # ZEPRINT_API_TOKEN: change-me  # require a bearer token on /api
+      # Home Assistant via MQTT discovery (optional):
+      # MQTT_HOST: 192.168.1.10
+      # MQTT_USERNAME: zeprint
+      # MQTT_PASSWORD: secret
+      # ZEPRINT_URL: http://192.168.1.20:8080
+    # (USB instead of network: see "Connecting the printer" in the README)

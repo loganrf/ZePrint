@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ZePrint</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='4' y='3' width='24' height='26' rx='3' fill='%23111'/%3E%3Crect x='8' y='8' width='16' height='3' fill='%23fff'/%3E%3Crect x='8' y='14' width='11' height='2' fill='%23fff'/%3E%3Crect x='8' y='19' width='14' height='2' fill='%23fff'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect x="4" y="3" width="24" height="26" rx="3"/><rect class="ink" x="8" y="8" width="16" height="3"/><rect class="ink" x="8" y="14" width="11" height="2"/><rect class="ink" x="8" y="19" width="14" height="2"/></svg>
+      <span>ZePrint</span>
+    </div>
+    <nav class="tabs" role="tablist">
+      <button data-view="labels" class="active">Labels</button>
+      <button data-view="printers">Printers</button>
+      <button data-view="jobs">Jobs</button>
+      <button data-view="zpl">ZPL</button>
+      <button data-view="settings">Settings</button>
+    </nav>
+    <div id="default-printer" class="printer-pill" title="Default printer"></div>
+  </header>
+
+  <main>
+    <!-- Labels -->
+    <section id="view-labels" class="view active">
+      <div class="labels-layout">
+        <aside class="label-list" id="label-list" aria-label="Labels"></aside>
+        <div class="panel form-panel">
+          <div class="panel-head">
+            <div>
+              <h2 id="label-title">Label</h2>
+              <p class="muted" id="label-desc"></p>
+            </div>
+          </div>
+          <form id="label-form" autocomplete="off">
+            <div class="row3">
+              <label>Printer<select id="lf-printer"></select></label>
+              <label>Label size<div class="seg" id="lf-size"></div></label>
+              <label>Copies<input id="lf-copies" type="number" min="1" max="100" value="1"></label>
+            </div>
+            <div id="lf-params" class="params"></div>
+            <div class="actions">
+              <button type="button" id="btn-preview" class="secondary">Preview</button>
+              <button type="submit" id="btn-print" class="primary">Print</button>
+              <span class="spacer"></span>
+              <button type="button" id="btn-save-defaults" class="ghost" title="Use these values for every print of this label (buttons, Home Assistant, API)">Save as defaults</button>
+              <button type="button" id="btn-reset" class="ghost">Reset</button>
+            </div>
+          </form>
+        </div>
+        <div class="panel preview-panel">
+          <div class="panel-head"><h2>Preview</h2><span id="preview-meta" class="muted"></span></div>
+          <div class="preview-box" id="preview-box"><p class="muted">Preview renders here - nothing is printed.</p></div>
+          <details id="report-box" hidden><summary>Report</summary><pre id="report"></pre></details>
+          <details id="data-box" hidden><summary>Data</summary><pre id="data"></pre></details>
+        </div>
+      </div>
+    </section>
+
+    <!-- Printers -->
+    <section id="view-printers" class="view">
+      <div class="panel-head wide">
+        <h2>Printers</h2>
+        <button class="primary" id="btn-add-printer">Add printer</button>
+      </div>
+      <div id="printer-list" class="cards"></div>
+    </section>
+
+    <!-- Jobs -->
+    <section id="view-jobs" class="view">
+      <div class="panel-head wide"><h2>Recent jobs</h2><span class="muted">refreshes automatically</span></div>
+      <div class="panel table-wrap">
+        <table class="jobs">
+          <thead><tr><th>When</th><th>Job</th><th>Printer</th><th>Size</th><th>Status</th><th>Detail</th></tr></thead>
+          <tbody id="job-rows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Raw ZPL -->
+    <section id="view-zpl" class="view">
+      <div class="zpl-layout">
+        <div class="panel">
+          <div class="panel-head"><h2>Raw ZPL</h2></div>
+          <textarea id="zpl-text" spellcheck="false">^XA
+^FO50,50^A0N,60,60^FDHello from ZePrint^FS
+^FO50,130^GB500,4,4^FS
+^FO50,160^BQN,2,6^FDMA,https://github.com/loganrf/ZePrint^FS
+^XZ</textarea>
+          <div class="actions">
+            <label class="inline">Printer <select id="zpl-printer"></select></label>
+            <span class="spacer"></span>
+            <button class="secondary" id="btn-zpl-preview">Preview</button>
+            <button class="primary" id="btn-zpl-send">Send to printer</button>
+          </div>
+        </div>
+        <div class="panel preview-panel">
+          <div class="panel-head"><h2>Preview</h2></div>
+          <div class="preview-box" id="zpl-preview"><p class="muted">Approximate render of the ZPL subset ZePrint uses.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Settings -->
+    <section id="view-settings" class="view">
+      <div class="settings-grid">
+        <div class="panel">
+          <div class="panel-head"><h2>Service</h2></div>
+          <form id="settings-form">
+            <label>Default printer<select id="set-default"></select></label>
+            <label>Timezone
+              <input id="set-tz" list="tz-list" placeholder="follow the container's TZ">
+              <small class="muted" id="set-tz-effective"></small>
+            </label>
+            <datalist id="tz-list"></datalist>
+            <div class="actions"><button class="primary" type="submit">Save</button></div>
+          </form>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h2>About</h2></div>
+          <dl class="facts" id="about"></dl>
+          <p><a href="docs" target="_blank" rel="noopener">API documentation</a> · <a href="https://github.com/loganrf/ZePrint" target="_blank" rel="noopener">GitHub</a></p>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h2>API token</h2></div>
+          <p class="muted">Only needed when the server sets <code>ZEPRINT_API_TOKEN</code>. Stored in this browser.</p>
+          <form id="token-form" class="inline-form">
+            <input id="token-input" type="password" placeholder="token" autocomplete="off">
+            <button class="secondary" type="submit">Save</button>
+          </form>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="printer-dialog">
+    <form id="printer-form" method="dialog">
+      <h2 id="printer-dialog-title">Add printer</h2>
+      <div class="grid2">
+        <label>Name<input name="name" required maxlength="64" placeholder="Zebra GX430t"></label>
+        <label>ID<input name="id" required pattern="[a-z0-9][a-z0-9_\-]{0,31}" placeholder="zebra" title="lowercase letters, digits, - and _"></label>
+      </div>
+      <label>Connection URI<input name="uri" required placeholder="tcp://192.168.1.50:9100">
+        <small class="muted">tcp://host:9100 &middot; usb:///dev/usb/lp0 &middot; ipp://host:631/printers/QUEUE</small></label>
+      <div class="grid3">
+        <label>DPI<select name="dpi"><option>203</option><option selected>300</option><option>600</option></select></label>
+        <label>Loaded labels<select name="label_size"></select></label>
+        <label>Media<select name="media"><option value="direct">Direct thermal</option><option value="ribbon">Ribbon (transfer)</option></select></label>
+      </div>
+      <div class="grid3">
+        <label>Darkness <output id="darkness-out">22</output><input name="darkness" type="range" min="0" max="30" value="22"></label>
+        <label>Speed (ips)<input name="speed" type="number" min="1" max="14" value="2"></label>
+        <label class="check"><input name="default" type="checkbox"> Default printer</label>
+      </div>
+      <p class="error" id="printer-error" hidden></p>
+      <div class="actions">
+        <button type="button" class="ghost" id="printer-cancel">Cancel</button>
+        <span class="spacer"></span>
+        <button type="submit" class="primary" id="printer-save">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="token-dialog">
+    <form id="token-dialog-form" method="dialog">
+      <h2>API token required</h2>
+      <p class="muted">This server requires a token (<code>ZEPRINT_API_TOKEN</code>).</p>
+      <input id="token-dialog-input" type="password" autocomplete="off" required>
+      <div class="actions"><span class="spacer"></span><button class="primary" type="submit">Continue</button></div>
+    </form>
+  </dialog>
+
+  <div id="toasts" aria-live="polite"></div>
+  <script src="app.js"></script>
+</body>
+</html>

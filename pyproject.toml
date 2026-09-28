@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zeprint"
+version = "0.1.0"
+description = "A label printing service for Zebra printers (GX430t and friends): satellite, tide, topo and weather labels, REST API, web UI and Home Assistant integration."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "pydantic>=2.6",
+    "numpy>=1.26",
+    "matplotlib>=3.8",
+    "pillow>=10",
+    "sgp4>=2.22",
+    "qrcode>=7.4",
+    "paho-mqtt>=2.0",
+    "certifi",
+    "tzdata",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "httpx>=0.27"]
+
+[project.scripts]
+zeprint = "zeprint.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["zeprint*"]
+
+[tool.setuptools.package-data]
+zeprint = ["web/*", "labels/data/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "tests"]
