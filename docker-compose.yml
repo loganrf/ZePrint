@@ -8,7 +8,7 @@ services:
     container_name: zeprint
     restart: unless-stopped
     ports:
-      - "${ZEPRINT_HTTP_PORT:-8080}:8080"
+      - "${ZEPRINT_HTTP_PORT:-3231}:8080"
     volumes:
       - zeprint-data:/data            # config.json, caches, plugins/
     environment:

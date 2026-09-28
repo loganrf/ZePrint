@@ -49,7 +49,7 @@ need an API key.
 git clone https://github.com/loganrf/ZePrint && cd ZePrint
 cp .env.example .env        # set ZEPRINT_PRINTER_URI=tcp://<printer-ip>:9100, DPI, size, TZ
 docker compose up -d --build
-open http://localhost:8080
+open http://localhost:3231
 ```
 
 The `ZEPRINT_PRINTER_*` variables only seed the **first** start. After that,
@@ -110,7 +110,8 @@ printers.
 | `ZEPRINT_LABEL_SIZE`, `ZEPRINT_DARKNESS`, `ZEPRINT_SPEED`, `ZEPRINT_MEDIA` | 4x6, 22, 2, direct | First-run printer. |
 | `ZEPRINT_API_TOKEN` | – | Require `Authorization: Bearer <token>` on `/api/*`. |
 | `ZEPRINT_DATA_DIR` | `/data` | Config, caches, `plugins/`. |
-| `ZEPRINT_PORT` | 8080 | |
+| `ZEPRINT_PORT` | 8080 | Port inside the container. |
+| `ZEPRINT_HTTP_PORT` | 3231 | Host port in the compose files. |
 | `PUID` / `PGID` | 1000 | Owner of the data directory. |
 | `MQTT_HOST` (+ `MQTT_*`) | – | Enables Home Assistant discovery; see [docs/home-assistant.md](docs/home-assistant.md). |
 
@@ -120,28 +121,28 @@ Interactive docs are served at `/docs`. The essentials:
 
 ```sh
 # print with a label's defaults on the default printer
-curl -X POST localhost:8080/api/labels/tides/print
+curl -X POST localhost:3231/api/labels/tides/print
 
 # parameters can be flat or nested under "params"; ?wait=N blocks until done
-curl -X POST 'localhost:8080/api/labels/tides/print?wait=30' \
+curl -X POST 'localhost:3231/api/labels/tides/print?wait=30' \
      -H 'Content-Type: application/json' -d '{"station": "9446484", "size": "2x1"}'
 
 # preview as PNG (POST with a body, or GET with query params for image cards)
-curl -o tide.png 'localhost:8080/api/labels/tides/preview.png?size=2x1&station=9446484'
+curl -o tide.png 'localhost:3231/api/labels/tides/preview.png?size=2x1&station=9446484'
 
 # render without printing: ZPL + markdown report + machine-readable data
-curl -X POST localhost:8080/api/labels/weather/render -d '{}' -H 'Content-Type: application/json'
+curl -X POST localhost:3231/api/labels/weather/render -d '{}' -H 'Content-Type: application/json'
 
 # raw ZPL straight to a printer
-curl -X POST localhost:8080/api/printers/zebra/raw --data-binary @label.zpl
+curl -X POST localhost:3231/api/printers/zebra/raw --data-binary @label.zpl
 
 # a carrier's shipping label PDF, in one call (every page, label in the top half)
-curl --data-binary @usps.pdf 'localhost:8080/api/print-file?pages=all&crop=top&wait=30'
+curl --data-binary @usps.pdf 'localhost:3231/api/print-file?pages=all&crop=top&wait=30'
 
 # an address label; save your return address once as the label's default
-curl -X PUT localhost:8080/api/labels/address/defaults -H 'Content-Type: application/json' \
+curl -X PUT localhost:3231/api/labels/address/defaults -H 'Content-Type: application/json' \
      -d '{"sender": "Logan R.|11800 NE Juanita Dr|Kirkland, WA 98034"}'
-curl -X POST localhost:8080/api/labels/address/print -H 'Content-Type: application/json' \
+curl -X POST localhost:3231/api/labels/address/print -H 'Content-Type: application/json' \
      -d '{"to": "Jane Doe|1 Main St|Seattle, WA 98101", "note": "FRAGILE"}'
 ```
 
