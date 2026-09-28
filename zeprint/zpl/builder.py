@@ -151,9 +151,9 @@ class ZPL:
         it. Returns the placed (width, height) in design units.
         """
         packed, rb, rows = encode_image(img, threshold)
-        w_design = self.design(rb * 8)
+        w_design = self.design(img.width)        # the byte padding is white, ignore it
         if x is None:
-            x = (self.W - w_design) / 2
+            x = max(0.0, (self.W - w_design) / 2)
         X, Y = self.dots(x), self.dots(y)
         for top in range(0, rows, BAND_ROWS):
             n = min(BAND_ROWS, rows - top)

@@ -6,6 +6,6 @@ dist/
 .pytest_cache/
 .venv/
 venv/
-data/
+/data/
 *.zpl
 .env

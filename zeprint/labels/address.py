@@ -4,7 +4,8 @@ Address labels from plain text.
 4x6: return address and recipient on one label (or either alone), plus an
      optional banner (FRAGILE, PRIORITY...), reference line and Code 128.
 2x1: one address per label; "both" prints two labels - the return address,
-     then the recipient - in one job.
+     then the recipient - in one job. The banner, reference and barcode go on
+     the recipient's label (or the only one).
 
 Addresses are one line per row (or rows separated by ``|``). Save your return
 address as this label's default once, and only the recipient changes per print.
@@ -32,25 +33,36 @@ class AddressParams(BaseModel):
         "both", title="Print",
         description="4x6: both on one label. 2x1: one address per label; both = two labels")
     note: str = Field("", max_length=32, title="Banner",
-                      description="Optional big line on 4x6, e.g. FRAGILE or PRIORITY")
+                      description="Optional big line, e.g. FRAGILE or PRIORITY")
     reference: str = Field("", max_length=64, title="Reference",
-                           description="Optional small line at the bottom of 4x6 (order #, contents)")
+                           description="Optional small line at the bottom (order #, contents)")
     barcode: str = Field("", max_length=40, title="Barcode",
-                         description="Optional Code 128 at the bottom of 4x6")
+                         description="Optional Code 128 at the bottom")
     captions: bool = Field(True, title="Captions", description="Print FROM / SHIP TO captions")
 
 
 def _block(ctx: RenderContext, z, x, y, lines, box_w, box_h, min_size, max_size,
-           center_in: float | None = None) -> float:
+           center_in: float | None = None, bold_first: bool = True) -> float:
     """Fit ``lines`` into a design-unit box at (x, y) - ``x=None`` centers across the
     label; returns the height used."""
     img = text_block(lines, ctx.dots(box_w), ctx.dots(box_h), ctx.dots(max_size),
-                     ctx.dots(min_size))
+                     ctx.dots(min_size), bold_first=bold_first)
     h = z.design(img.height)
     if center_in is not None:
         y += max(0, (center_in - h) / 2)
     z.image(x, y, img)
     return h
+
+
+def _code128(z, x, y, data: str, height, width, interpretation: bool = True) -> None:
+    """Code 128 with the widest module (3, else 2 design units) that fits ``width``."""
+    modules = 11 * (len(data) + 3) + 2            # start + data + check + stop, subset B
+    for module in (3, 2):
+        if modules * max(1, z.dots(module)) <= z.dots(width):
+            z.code128(x, y, data, height, module=module, interpretation=interpretation)
+            return
+    raise LabelError(f"the barcode is too long for a {z.size.id} label "
+                     f"({len(data)} characters)")
 
 
 def layout_4x6(z, ctx, p: AddressParams, to, frm) -> None:
@@ -98,17 +110,31 @@ def layout_4x6(z, ctx, p: AddressParams, to, frm) -> None:
         z.text(M, yb, 30, p.reference)
     if p.barcode:
         yb -= 170
-        z.code128(M, yb + 10, p.barcode, 110, module=3)
+        _code128(z, M, yb + 10, p.barcode, 110, W - 2 * M)
 
 
-def layout_2x1(z, ctx, p: AddressParams, lines, caption) -> None:
+def layout_2x1(z, ctx, p: AddressParams, lines, caption, extras: bool) -> None:
+    """One address; ``extras`` adds the banner, reference and barcode."""
     M = 16
     W, H = z.W, z.H
-    y = M
+    note, ref, code = (p.note, p.reference, p.barcode) if extras else ("", "", "")
+    y, bottom = M, H - M
+    if code:                                  # bottom up: barcode, then reference
+        bottom -= 40
+        _code128(z, M, bottom, code, 40, W - 2 * M, interpretation=False)
+        bottom -= 6
+    if ref:
+        bottom -= 24
+        _block(ctx, z, M, bottom, [ref], W - 2 * M, 24, 12, 22, bold_first=False)
+        bottom -= 6
+    if note:                                  # banner in a heavy box
+        z.box(M, y, W - 2 * M, 52, 4)
+        _block(ctx, z, None, y + 8, [note.upper()], W - 2 * M - 24, 36, 16, 36, center_in=36)
+        y += 52 + 10
     if p.captions:
-        z.text(M, M - 6, 20, caption)
+        z.text(M, y - 6, 20, caption)
         y += 20
-    _block(ctx, z, M, y, lines, W - 2 * M, H - y - M, 18, 70, center_in=H - y - M)
+    _block(ctx, z, M, y, lines, W - 2 * M, bottom - y, 18, 70, center_in=bottom - y)
 
 
 @register
@@ -133,14 +159,14 @@ class AddressLabel(Label):
             raise LabelError(f"enter {wanted}")
 
         if ctx.size.id == "2x1":
-            blocks = [(frm, "FROM"), (to, "TO")]
+            blocks = [(lines, caption) for lines, caption in ((frm, "FROM"), (to, "TO"))
+                      if lines]
             zpl = ""
-            for lines, caption in blocks:
-                if lines:
-                    z = ctx.zpl()
-                    layout_2x1(z, ctx, p, lines, caption)
-                    zpl += z.build()
-            n = sum(1 for lines, _ in blocks if lines)
+            for i, (lines, caption) in enumerate(blocks):
+                z = ctx.zpl()
+                layout_2x1(z, ctx, p, lines, caption, extras=i == len(blocks) - 1)
+                zpl += z.build()
+            n = len(blocks)
         else:
             z = ctx.zpl()
             layout_4x6(z, ctx, p, to, frm)

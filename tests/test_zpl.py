@@ -33,9 +33,10 @@ def test_run_length_boundaries(n):
     assert decompress_hex(compress_hex(packed, rb), rb, len(packed)) == packed
 
 
-def test_encode_crops_to_whole_bytes():
+def test_encode_pads_to_whole_bytes():
     packed, rb, rows = encode_image(Image.new("L", (803, 2), 0))
-    assert (rb, rows) == (100, 2)
+    assert (rb, rows) == (101, 2)
+    assert packed[99] == 0xFF and packed[100] == 0b11100000     # last 3 dots kept, pad white
 
 
 def test_sizes_and_aliases():
