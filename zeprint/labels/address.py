@@ -19,7 +19,9 @@ from pydantic import BaseModel, Field
 
 from ..errors import LabelError
 from . import Label, RenderContext, RenderResult, register
-from ._text import split_lines, text_block
+from ._text import fits, split_lines, text_block
+
+MAX_LINES = 8
 
 
 class AddressParams(BaseModel):
@@ -134,6 +136,9 @@ def layout_2x1(z, ctx, p: AddressParams, lines, caption, extras: bool) -> None:
     if p.captions:
         z.text(M, y - 6, 20, caption)
         y += 20
+    if (note or ref or code) and not fits(lines, ctx.dots(18), ctx.dots(bottom - y)):
+        raise LabelError("the address has too many lines for a 2x1 label with a banner, "
+                         "reference or barcode: leave those out, or print on 4x6")
     _block(ctx, z, M, y, lines, W - 2 * M, bottom - y, 18, 70, center_in=bottom - y)
 
 
@@ -153,6 +158,10 @@ class AddressLabel(Label):
             frm = []
         elif p.include == "from":
             to = []
+        for lines, which in ((to, "To"), (frm, "From")):
+            if len(lines) > MAX_LINES:
+                raise LabelError(f"the {which} address has {len(lines)} lines "
+                                 f"({MAX_LINES} at most)")
         if not (to or frm):
             wanted = {"to": "a To address", "from": "a From (return) address",
                       "both": "a To and/or From address"}[p.include]

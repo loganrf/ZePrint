@@ -19,6 +19,9 @@ Command topics (``<base>`` defaults to ``zeprint``):
   <base>/print               JSON with a "label" key plus the same fields
   <base>/raw/<printer>       raw ZPL to send as-is
 
+Commands are ignored if retained: the broker would replay them - and reprint -
+on every reconnect.
+
 State topics: <base>/status (online/offline, retained LWT), <base>/job,
 <base>/printer/<id>, <base>/error.
 
@@ -203,11 +206,11 @@ class MqttBridge:
 
     def _on_message(self, client, userdata, msg):
         try:
-            self.handle(msg.topic, msg.payload)
+            self.handle(msg.topic, msg.payload, retained=bool(msg.retain))
         except Exception:
             log.exception("MQTT message on %s failed", msg.topic)
 
-    def handle(self, topic: str, payload: bytes) -> None:
+    def handle(self, topic: str, payload: bytes, retained: bool = False) -> None:
         """Route one inbound message (public for tests)."""
         text = payload.decode("utf-8", "replace").strip() if payload else ""
         if topic == f"{self.prefix}/status":
@@ -220,6 +223,10 @@ class MqttBridge:
             if text and topic not in {t for t, _ in self.entity_configs()}:
                 log.info("removing stale Home Assistant entity %s", topic)
                 self._publish(topic, None, retain=True)
+            return
+        if retained:
+            log.warning("ignoring retained command on %s: publish commands without retain, "
+                        "or it reprints on every reconnect", topic)
             return
         try:
             if topic.startswith(f"{self.base}/raw/"):

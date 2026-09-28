@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field, field_validator
 from .. import net
 from ..errors import LabelError
 from . import Label, RenderContext, RenderResult, register
+from ._text import font
 from .topo import parse_latlon
 
 API = "https://api.open-meteo.com/v1/forecast"
@@ -215,9 +216,9 @@ def plot_wind(ctx, marina, marina_name, wind_unit, now, hours_ahead=None,
                             "peak_time": times[peak].isoformat(), "peak_dir": compass(drc[peak])}
 
 
-def wind_sparkline(ctx, marina, now, w_px=576, h_px=88):
+def wind_sparkline(ctx, marina, now, hours_ahead=None, w_px=576, h_px=88):
     """Minimal all-black sustained+gust sparkline (no axes) for the 2x1 card."""
-    times, spd, gst, _ = _wind_series(marina, now)
+    times, spd, gst, _ = _wind_series(marina, now, hours_ahead)
     fig = ctx.figure(w_px, h_px)
     ax = fig.add_axes([0, 0, 1, 1])
     ax.axis("off")
@@ -232,20 +233,31 @@ def wind_sparkline(ctx, marina, now, w_px=576, h_px=88):
 
 # ------------------------------------------------------------------ layouts
 
+def _trim_to(text: str, height: float, width: float) -> str:
+    """Cut ``text`` to fit ``width`` design units as ``^A0`` text of ``height`` (measured
+    like the preview draws it: DejaVu Sans at 0.82 x height)."""
+    f = font(max(6, int(height * 0.82)))
+    while text and f.getlength(text) > width:     # drop whole words, else characters
+        text = text.rsplit(" ", 1)[0].rstrip() if " " in text.strip() else text[:-1]
+    return text
+
+
 def layout_2x1(z, ctx, p, home, marina, now, tzabbr):
     M = 12
-    H = z.H
+    W, H = z.W, z.H
     wu = WIND_LABEL[p.wind_unit]
     tu = "F" if p.temp_unit == "fahrenheit" else "C"
     c, d = home["current"], home["daily"]
     cond = WMO.get(c.get("weather_code"), "-")
-    z.text(M, 8, 32, f"{p.home_name.upper()[:14]}  {c['temperature_2m']:.0f}{tu}  {cond}")
+    z.text(M, 8, 32, _trim_to(f"{p.home_name.upper()[:14]}  {c['temperature_2m']:.0f}{tu}  {cond}",
+                              32, W - 2 * M))
     z.text(M, 46, 22, f"Wind {compass(c.get('wind_direction_10m'))} {c['wind_speed_10m']:.0f} {wu} "
                       f"g{c['wind_gusts_10m']:.0f}   Hum {c['relative_humidity_2m']:.0f}%")
     z.text(M, 76, 22, f"Today Hi {d['temperature_2m_max'][0]:.0f} / Lo {d['temperature_2m_min'][0]:.0f}"
                       f"{tu}   Precip {d['precipitation_probability_max'][0] or 0:.0f}%")
-    z.text(M, 110, 18, f"{p.marina_name} wind ({wu}), today")
-    z.image(M, 132, wind_sparkline(ctx, marina, now))
+    span = f"next {p.hours_ahead} h" if p.hours_ahead else "today"
+    z.text(M, 110, 18, f"{p.marina_name} wind ({wu}), {span}")
+    z.image(M, 132, wind_sparkline(ctx, marina, now, p.hours_ahead))
     z.text(M, H - 24, 18, f"Open-Meteo  -  {now:%Y-%m-%d %H:%M} {tzabbr}")
 
 

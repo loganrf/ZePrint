@@ -22,6 +22,8 @@ import logging
 import os
 import sys
 
+from .schemas import MAX_COPIES
+
 
 def _params(pairs: list[str], svc=None) -> dict:
     """-p KEY=VALUE pairs. KEY=@path uploads a local file and passes its id
@@ -89,11 +91,12 @@ def cmd_print(args, svc) -> int:
         from .config import PrinterConfig
         from .service import format_validation
         current = svc.settings.printer(printer_id)
+        # the configured printer's settings (media, darkness, speed...) unless overridden
+        base = current.model_dump() if current else {}
         try:
-            adhoc = PrinterConfig(id="cli", name="command line", uri=args.uri,
-                                  dpi=args.dpi or (current.dpi if current else 300),
-                                  label_size=args.size or (current.label_size if current
-                                                           else "4x6"))
+            adhoc = PrinterConfig(**{**base, "id": "cli", "name": "command line", "uri": args.uri,
+                                     "dpi": args.dpi or base.get("dpi", 300),
+                                     "label_size": args.size or base.get("label_size", "4x6")})
         except ValidationError as e:
             print(f"error: {format_validation(e)}", file=sys.stderr)
             return 2
@@ -114,6 +117,16 @@ def cmd_print(args, svc) -> int:
         return 1
     print(f"printed {job.title} on {job.printer} ({job.bytes} bytes)", file=sys.stderr)
     return 0
+
+
+def _copies(v: str) -> int:
+    try:
+        n = int(v)
+    except ValueError:
+        n = 0
+    if not 1 <= n <= MAX_COPIES:
+        raise argparse.ArgumentTypeError(f"must be a whole number from 1 to {MAX_COPIES}")
+    return n
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -138,7 +151,7 @@ def main(argv: list[str] | None = None) -> int:
         r.add_argument("--size", help="4x6 or 2x1 (default: the printer's stock)")
         r.add_argument("--dpi", type=int, choices=[203, 300, 600])
         r.add_argument("--printer", help="printer id (default: the default printer)")
-        r.add_argument("--copies", type=int, default=1)
+        r.add_argument("--copies", type=_copies, default=1, help=f"1-{MAX_COPIES}")
         if name == "render":
             r.add_argument("--zpl", metavar="FILE", help="write the ZPL here")
             r.add_argument("--preview", metavar="PNG", help="write a PNG preview here")

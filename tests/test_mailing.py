@@ -97,6 +97,21 @@ def test_address_include_and_missing():
         lbl.render(AddressParams(), ctx())
 
 
+def test_address_line_limits():
+    """Lines past the 8th used to vanish; on 2x1 with extras, text shrank below legible."""
+    from zeprint.labels.address import AddressLabel, AddressParams
+    nine = "|".join(f"Line {i}" for i in range(8)) + "|USA"
+    with pytest.raises(LabelError, match="9 lines"):
+        AddressLabel().render(AddressParams(to=nine, include="to"), ctx())
+    AddressLabel().render(AddressParams(to=TO, sender=nine, include="to"), ctx())   # unused
+    extras = dict(note="fragile", reference="Order 1", barcode="12345", include="to")
+    five = "|".join(f"Line {i} of the address" for i in range(5))
+    with pytest.raises(LabelError, match="too many lines for a 2x1"):
+        AddressLabel().render(AddressParams(to=five, **extras), ctx("2x1", 203))
+    AddressLabel().render(AddressParams(to=five, include="to"), ctx("2x1", 203))
+    AddressLabel().render(AddressParams(to=TO, **extras), ctx("2x1", 203))
+
+
 def test_long_address_is_fitted_not_clipped():
     from zeprint.labels.address import AddressLabel, AddressParams
     long = ("Dr. Maximilian Alexander Featherstonehaugh III|Department of Extremely Long "
@@ -140,6 +155,15 @@ def test_image_pdf_pages_crop_and_rotation():
                                   ctx("4x6", 300, files)).zpl) == 2
     with pytest.raises(LabelError, match="page 7"):
         lbl.render(ImageParams(image="usps.pdf", pages="7"), ctx("4x6", 300, files))
+
+
+def test_pdf_pages_decode_one_at_a_time():
+    """Pages used to be rendered up front: 20 pages at 600 dpi held ~800 MiB."""
+    from zeprint.labels.image import load_pages
+    pages, total = load_pages(letter_pdf_with_label(3), "all", 100)
+    assert total == 3 and not isinstance(pages, list)
+    assert next(pages).mode == "L"
+    pages.close()                                     # early stop releases the PDF
 
 
 def test_image_params_validation():
@@ -205,6 +229,10 @@ def test_api_upload_preview_and_print_file(client, printer):
     assert printer.wait_for(1)[0].count(b"^XA") == 2
     assert client.post("/api/uploads", content=b"not a file").status_code == 422
     assert client.post("/api/print-file?copies=500", content=pdf).status_code == 422
+    kept = len(client.get("/api/uploads").json())
+    for bad in ("pages=abc", "size=3x5", "printer=nope"):              # rejected: not stored
+        assert client.post(f"/api/print-file?{bad}", content=pdf).status_code in (404, 422)
+    assert len(client.get("/api/uploads").json()) == kept
     assert client.delete(f"/api/uploads/{meta['id']}").status_code == 204
 
 

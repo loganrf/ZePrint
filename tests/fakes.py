@@ -135,9 +135,14 @@ class FakeNet:
                                                  "timezonecorr": -8,
                                                  "observedst": True}]}).encode()
             date = dt.datetime.strptime(qs["begin_date"][0], "%Y%m%d").date()
+            end = dt.datetime.strptime(qs["end_date"][0], "%Y%m%d").date()
             if qs["product"][0] == "water_level":
                 return json.dumps({"data": [{"t": f"{date} 10:24", "v": "7.412"}]}).encode()
-            return json.dumps(noaa_predictions(date, qs["interval"][0])).encode()
+            rows = []
+            while date <= end:
+                rows += noaa_predictions(date, qs["interval"][0])["predictions"]
+                date += dt.timedelta(days=1)
+            return json.dumps({"predictions": rows}).encode()
         if host == "celestrak.org":
             if "/NORAD/elements/" in url:
                 return ISS_TLE.encode()

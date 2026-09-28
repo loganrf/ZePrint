@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import io
 import re
-from typing import Literal, Optional
+from typing import Iterator, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -93,9 +93,13 @@ def page_numbers(spec: str, count: int) -> list[int]:
     return idx
 
 
-def load_pages(data: bytes, spec: str, dpi: int) -> tuple[list, int]:
-    """Decode the file into grayscale PIL pages. Returns (pages, total page count)."""
-    from PIL import Image, ImageSequence
+def load_pages(data: bytes, spec: str, dpi: int) -> tuple[Iterator, int]:
+    """
+    Decode the file into grayscale PIL pages. Returns (pages, total page count);
+    ``pages`` is a generator that decodes one page at a time, so a 50-page PDF
+    at 600 dpi doesn't hold 50 page bitmaps at once. Close it when done early.
+    """
+    from PIL import Image
 
     if data[:4] == b"%PDF":
         import pypdfium2 as pdfium
@@ -105,23 +109,43 @@ def load_pages(data: bytes, spec: str, dpi: int) -> tuple[list, int]:
             raise LabelError(f"that PDF can't be read ({e})") from None
         try:
             total = len(pdf)
-            pages = []
-            for i in page_numbers(spec, total):
-                page = pdf[i]
-                w_pt, h_pt = page.get_size()
-                scale = min(dpi / 72, MAX_RENDER_SIDE / max(w_pt, h_pt, 1))
-                pages.append(page.render(scale=scale, grayscale=True).to_pil().convert("L"))
-            return pages, total
-        finally:
+            idx = page_numbers(spec, total)
+        except BaseException:
             pdf.close()
+            raise
+
+        def pdf_pages():
+            try:
+                for i in idx:
+                    page = pdf[i]
+                    w_pt, h_pt = page.get_size()
+                    scale = min(dpi / 72, MAX_RENDER_SIDE / max(w_pt, h_pt, 1))
+                    yield page.render(scale=scale, grayscale=True).to_pil().convert("L")
+            finally:
+                pdf.close()
+        return pdf_pages(), total
+
+    def unreadable(e: Exception) -> LabelError:
+        if isinstance(e, Image.DecompressionBombError):
+            return LabelError("that image is too large")
+        return LabelError(f"that file isn't a readable image or PDF ({e})")
+
     try:
         img = Image.open(io.BytesIO(data))
-        frames = [f.copy() for f in ImageSequence.Iterator(img)]
-    except Image.DecompressionBombError:
-        raise LabelError("that image is too large") from None
+        total = getattr(img, "n_frames", 1)
     except Exception as e:
-        raise LabelError(f"that file isn't a readable image or PDF ({e})") from None
-    return [frames[i] for i in page_numbers(spec, len(frames))], len(frames)
+        raise unreadable(e) from None
+    idx = page_numbers(spec, total)
+
+    def frames():
+        for i in idx:
+            try:
+                img.seek(i)
+                frame = img.copy()
+            except Exception as e:
+                raise unreadable(e) from None
+            yield frame
+    return frames(), total
 
 
 def prepare(img, box_w: int, box_h: int, p: ImageParams):
@@ -190,16 +214,19 @@ class ImageLabel(Label):
         zpl = []
         with ctx.drawing():                               # pdfium isn't thread-safe
             pages, total = load_pages(data, p.pages, ctx.dpi)
-            for page in pages:
-                z = ctx.zpl()
-                m = p.margin * 300                        # inches -> design units
-                box_w, box_h = ctx.dots(z.W - 2 * m), ctx.dots(z.H - 2 * m)
-                if box_w < 8 or box_h < 8:
-                    raise LabelError("the margin leaves no room on this label size")
-                img = prepare(page, box_w, box_h, p)
-                h = z.design(img.height)
-                z.image(None, (z.H - h) / 2, img, threshold=128)
-                zpl.append(z.build())
+            try:
+                for page in pages:
+                    z = ctx.zpl()
+                    m = p.margin * 300                    # inches -> design units
+                    box_w, box_h = ctx.dots(z.W - 2 * m), ctx.dots(z.H - 2 * m)
+                    if box_w < 8 or box_h < 8:
+                        raise LabelError("the margin leaves no room on this label size")
+                    img = prepare(page, box_w, box_h, p)
+                    h = z.design(img.height)
+                    z.image(None, (z.H - h) / 2, img, threshold=128)
+                    zpl.append(z.build())
+            finally:
+                pages.close()                             # frees the PDF inside the lock
         return RenderResult("".join(zpl), title=f"image-{meta.get('filename') or 'file'}",
                             data={"labels": len(zpl), "page_count": total,
                                   "source": meta.get("filename") or p.image,

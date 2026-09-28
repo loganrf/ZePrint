@@ -42,9 +42,10 @@ class TidesParams(BaseModel):
 
 # ------------------------------------------------------------------- fetch
 
-def _dg(station: str, date: dt.date, product: str, extra: str = "", ttl: float = 600):
-    ymd = date.strftime("%Y%m%d")
-    url = (f"{DG}?product={product}&application={APP}&begin_date={ymd}&end_date={ymd}"
+def _dg(station: str, date: dt.date, product: str, extra: str = "", ttl: float = 600,
+        end: dt.date | None = None):
+    ymd, end_ymd = date.strftime("%Y%m%d"), (end or date).strftime("%Y%m%d")
+    url = (f"{DG}?product={product}&application={APP}&begin_date={ymd}&end_date={end_ymd}"
            f"&datum=MLLW&station={station}&time_zone=lst_ldt&units=english&format=json{extra}")
     return net.fetch_json(url, source="NOAA CO-OPS", ttl=ttl)
 
@@ -85,15 +86,19 @@ def fetch_station(station: str) -> dict:
 
 
 def fetch_tides(station: str, date: dt.date):
-    """Returns (curve[(t, ft)], events[(t, ft, 'H'/'L')], observed)."""
+    """Returns (curve[(t, ft)], events[(t, ft, 'H'/'L')], observed, next_day_events).
+    The next day's highs and lows give "next tide" after the day's last one."""
     curve_raw = _dg(station, date, "predictions", "&interval=6")
     if "predictions" not in curve_raw:
         msg = (curve_raw.get("error") or {}).get("message", "unknown error")
         raise LabelError(f"NOAA returned no predictions for station {station} ({msg}). "
                          "Check the station id.")
-    hilo_raw = _dg(station, date, "predictions", "&interval=hilo")
+    hilo_raw = _dg(station, date, "predictions", "&interval=hilo",
+                   end=date + dt.timedelta(days=1))
     curve = [(t, v) for t, v, _ in _parse(curve_raw["predictions"])]
-    events = _parse(hilo_raw.get("predictions", []))
+    hilo = _parse(hilo_raw.get("predictions", []))
+    events = [e for e in hilo if e[0].date() == date]
+    later = [e for e in hilo if e[0].date() > date]
     if len(curve) < 2:
         raise LabelError(f"NOAA returned too few predictions for station {station}")
 
@@ -104,7 +109,7 @@ def fetch_tides(station: str, date: dt.date):
             observed = (dt.datetime.strptime(wl[-1]["t"], "%Y-%m-%d %H:%M"), float(wl[-1]["v"]))
     except Exception:
         pass
-    return curve, events, observed
+    return curve, events, observed, later
 
 
 # ---------------------------------------------------------------- sun / moon
@@ -313,15 +318,15 @@ def layout_4x6(z, ctx, station, name, date, curve, events, now, observed, now_le
                             f"{ctx.now:%Y-%m-%d %H:%M %Z} - not for navigation")
 
 
-def layout_2x1(z, ctx, station, name, date, curve, events, now, now_level, observed):
+def layout_2x1(z, ctx, station, name, date, curve, events, now, now_level, observed, nxt):
     """Compact card: next hi/lo, now level, tide sparkline."""
     M = 12
     H = z.H
     z.text(M, 8, 30, f"TIDES  {(name or f'Station {station}')[:18]}")
-    nxt = next((e for e in events if e[0] >= now), None)
     if nxt:
+        day = f"{nxt[0]:%a} " if nxt[0].date() != now.date() else ""
         z.text(M, 44, 24, f"Next {'HIGH' if nxt[2] == 'H' else 'LOW'} "
-                          f"{nxt[0]:%-I:%M %p}   {nxt[1]:+.1f} ft")
+                          f"{day}{nxt[0]:%-I:%M %p}   {nxt[1]:+.1f} ft")
     lvl = observed[1] if observed else now_level
     z.text(M, 74, 22, f"Now {lvl:+.1f} ft ({'obs' if observed else 'pred'})   MLLW   {date:%b %-d}")
     z.text(M, 104, 18, "tide, today (ft)")
@@ -359,7 +364,8 @@ class TidesLabel(Label):
                     else DEFAULT_LATLON)
         lat, lon = float(lat), float(lon)
 
-        curve, events, observed = fetch_tides(p.station, date)
+        curve, events, observed, later = fetch_tides(p.station, date)
+        nxt = next((e for e in events + later if e[0] >= now), None)
         page_url = STATION_PAGE.format(sid=p.station)
         ni = min(range(len(curve)), key=lambda k: abs((curve[k][0] - now).total_seconds()))
         now_level = curve[ni][1]
@@ -368,13 +374,12 @@ class TidesLabel(Label):
         with ctx.drawing():
             if ctx.size.id == "2x1":
                 layout_2x1(z, ctx, p.station, name, date, curve, events, now, now_level,
-                           observed)
+                           observed, nxt)
             else:
                 layout_4x6(z, ctx, p.station, name, date, curve, events, now, observed,
                            now_level, sun_times(date, lat, lon, tz_day), moon_phase(date),
                            page_url)
 
-        nxt = next((e for e in events if e[0] >= now), None)
         data = {"station": p.station, "name": name, "date": date.isoformat(),
                 "level_ft": observed[1] if observed else now_level,
                 "level_source": "observed" if observed else "predicted",

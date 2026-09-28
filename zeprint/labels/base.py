@@ -39,6 +39,7 @@ from pydantic import BaseModel
 from ..zpl.builder import DESIGN_DPI, ZPL, LabelSize
 
 # matplotlib isn't thread-safe (shared font objects), so figure work is serialized.
+# pdfium isn't either: the upload store takes this lock to read PDFs too.
 _DRAW_LOCK = threading.RLock()
 
 

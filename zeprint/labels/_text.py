@@ -32,11 +32,11 @@ def font(px: int, bold: bool = False):
     return ImageFont.truetype(path, max(4, px)) if path else ImageFont.load_default()
 
 
-def split_lines(text: str, max_lines: int = 8) -> list[str]:
+def split_lines(text: str) -> list[str]:
     """One line per row; a single-line value may use ``|`` as the row separator."""
     text = (text or "").replace("\r\n", "\n").replace("\r", "\n")
     parts = text.split("\n") if "\n" in text else text.split("|")
-    return [p.strip() for p in parts if p.strip()][:max_lines]
+    return [p.strip() for p in parts if p.strip()]
 
 
 def _measure(lines, px, bold_first, spacing):
@@ -48,6 +48,13 @@ def _measure(lines, px, bold_first, spacing):
         heights.append(ascent + descent)
     gap = int(px * spacing)
     return max(widths), sum(heights) + gap * (len(lines) - 1), heights, gap
+
+
+def fits(lines: list[str], px: int, box_h: int, bold_first: bool = True,
+         spacing: float = 0.12) -> bool:
+    """Whether ``lines`` at ``px`` fit ``box_h`` (too-wide lines are condensed instead)."""
+    lines = [ln for ln in lines if ln]
+    return not lines or _measure(lines, max(4, px), bold_first, spacing)[1] <= box_h
 
 
 def text_block(lines: list[str], box_w: int, box_h: int, max_px: int, min_px: int,

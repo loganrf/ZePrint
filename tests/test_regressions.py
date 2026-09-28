@@ -212,3 +212,81 @@ def test_raster_keeps_the_rightmost_columns(width):
     assert x >= 0 and x + width <= 406                 # on the label, whole
     out = np.asarray(render_all(zpl))
     assert (out[:6, x + width - 3:x + width] == 0).all()
+
+
+def test_tides_next_event_after_the_days_last_tide(fake_net):
+    """At 23:30 the day's highs and lows are all past; the next one is tomorrow's."""
+    from zeprint.labels import RenderContext
+    from zeprint.labels.tides import TidesLabel, TidesParams
+    from zeprint.zpl import get_size
+    now = dt.datetime(2026, 9, 28, 23, 30, tzinfo=dt.timezone(dt.timedelta(hours=-7)))
+    r = TidesLabel().render(TidesParams(), RenderContext(get_size("2x1"), now=now))
+    assert r.data["date"] == "2026-09-28"
+    assert r.data["next_event"]["time"].startswith("2026-09-29")
+    assert "^FDNext " in r.zpl and " Tue " in r.zpl                 # labelled with its day
+    assert all(e["time"].startswith("2026-09-28") for e in r.data["events"])
+
+
+def test_weather_2x1_hours_ahead_and_long_headline(fake_net, monkeypatch):
+    """2x1 ignored hours_ahead, and a long place + condition ran off the right edge."""
+    import numpy as np
+    from zeprint.labels import RenderContext
+    from zeprint.labels import weather
+    from zeprint.zpl import get_size, render_all
+    ctx = lambda: RenderContext(get_size("2x1"), now=NOW)
+    today = weather.WeatherLabel().render(weather.WeatherParams(), ctx()).zpl
+    ahead = weather.WeatherLabel().render(weather.WeatherParams(hours_ahead=48), ctx()).zpl
+    assert "wind (kn), next 48 h" in ahead and ahead != today.replace("today", "next 48 h")
+    monkeypatch.setitem(weather.WMO, 2, "Thunderstorm w/ heavy hail")
+    r = weather.WeatherLabel().render(weather.WeatherParams(home_name="Port Townsend WA"), ctx())
+    headline = np.asarray(render_all(r.zpl))[:44]
+    assert (headline[:, 600 - 10:] == 255).all()                  # right margin stays clear
+
+
+def test_cli_uri_uses_the_configured_printer_settings(tmp_path, printer, monkeypatch):
+    """--uri kept dpi and size but printed direct-thermal at default darkness/speed."""
+    from zeprint.__main__ import main
+    for k, v in {"ZEPRINT_PRINTER_URI": "tcp://10.9.9.9:9100", "ZEPRINT_MEDIA": "ribbon",
+                 "ZEPRINT_DARKNESS": "5", "ZEPRINT_SPEED": "4",
+                 "ZEPRINT_DATA_DIR": str(tmp_path)}.items():
+        monkeypatch.setenv(k, v)
+    assert main(["--data-dir", str(tmp_path), "print", "test", "--uri", printer.uri]) == 0
+    sent = printer.wait_for(1)[0]
+    assert b"^MTT" in sent and b"~SD05" in sent and b"^PR4" in sent
+    for bad in ("0", "5000", "two"):
+        with pytest.raises(SystemExit):
+            main(["--data-dir", str(tmp_path), "print", "test", "--copies", bad])
+
+
+def test_mqtt_ignores_retained_commands(bridge, svc):
+    """A retained print command would be replayed, and reprinted, on every reconnect."""
+    from types import SimpleNamespace
+    before = len(svc.jobs.list())
+    for topic in ("zeprint/print/test", "zeprint/print", "zeprint/raw/zebra"):
+        payload = b'{"label": "test"}' if topic == "zeprint/print" else b"PRESS"
+        bridge._on_message(None, None, SimpleNamespace(topic=topic, payload=payload, retain=True))
+    assert len(svc.jobs.list()) == before
+    bridge._on_message(None, None, SimpleNamespace(topic="homeassistant/status",
+                                                   payload=b"online", retain=True))
+    assert bridge.client.topics()                  # retained HA status still re-announces
+
+
+def test_pdf_page_count_waits_for_the_render_lock():
+    """pdfium isn't thread-safe: counting an upload's pages mid-render corrupted both."""
+    from fakes import letter_pdf_with_label
+    from zeprint.labels.base import _DRAW_LOCK
+    from zeprint.uploads import pdf_page_count
+    pdf = letter_pdf_with_label(2)
+    held, release, counted = threading.Event(), threading.Event(), threading.Event()
+
+    def render():
+        with _DRAW_LOCK:
+            held.set()
+            release.wait(5)
+    threading.Thread(target=render, daemon=True).start()
+    assert held.wait(5)
+    threading.Thread(target=lambda: pdf_page_count(pdf) == 2 and counted.set(),
+                     daemon=True).start()
+    assert not counted.wait(0.3)                  # waits while a render holds pdfium
+    release.set()
+    assert counted.wait(5)

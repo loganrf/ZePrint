@@ -41,14 +41,16 @@ def sniff(data: bytes) -> str | None:
 
 def pdf_page_count(data: bytes) -> int:
     import pypdfium2 as pdfium
-    try:
-        pdf = pdfium.PdfDocument(data)
-    except Exception as e:
-        raise InvalidRequest(f"that PDF can't be read ({e})") from None
-    try:
-        return len(pdf)
-    finally:
-        pdf.close()
+    from .labels.base import _DRAW_LOCK
+    with _DRAW_LOCK:                  # pdfium isn't thread-safe; renders hold this lock too
+        try:
+            pdf = pdfium.PdfDocument(data)
+        except Exception as e:
+            raise InvalidRequest(f"that PDF can't be read ({e})") from None
+        try:
+            return len(pdf)
+        finally:
+            pdf.close()
 
 
 class UploadStore:

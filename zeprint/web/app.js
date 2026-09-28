@@ -111,6 +111,7 @@ function paramField(name, raw, value) {
     input = el("textarea", { name, rows: 4, maxlength: p.maxLength, placeholder: "one line per row" });
     input.value = value ?? "";
     input.dataset.kind = "string";
+    input.dataset.blank = p.default === "" ? "1" : "";
     return el("label", { class: "wide" }, title, input, help);
   }
   if (p.format === "zeprint-file") return fileField(name, title, value, help);
@@ -139,6 +140,7 @@ function paramField(name, raw, value) {
   }
   input.dataset.kind = p.type || "string";
   input.dataset.nullable = p.nullable ? "1" : "";
+  input.dataset.blank = p.type === "string" && p.default === "" ? "1" : "";
   return el("label", {}, title, input, help);
 }
 
@@ -172,7 +174,13 @@ function collectParams() {
     const kind = inp.dataset.kind;
     if (inp.type === "checkbox") { out[inp.name] = inp.checked; return; }
     const v = inp.value.trim();
-    if (v === "") { if (inp.dataset.nullable) out[inp.name] = null; return; }
+    // a cleared field must override a saved default: null or "" when that's valid,
+    // otherwise leave it out and let the default apply
+    if (v === "") {
+      if (inp.dataset.nullable) out[inp.name] = null;
+      else if (inp.dataset.blank) out[inp.name] = "";
+      return;
+    }
     out[inp.name] = kind === "integer" ? parseInt(v, 10) : kind === "number" ? parseFloat(v) : v;
   });
   return out;

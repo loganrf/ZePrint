@@ -344,8 +344,12 @@ def create_app(service: ZePrint | None = None, *, token: str | None = None,
         printer, size = q.pop("printer", None), q.pop("size", None)
         name = q.pop("filename", None) or request.headers.get("x-filename")
         meta = await run_in_threadpool(svc.uploads.put, data, name)
-        job = svc.print_label("image", {**q, "image": meta["id"]}, printer_id=printer,
-                              size=size, copies=copies)
+        try:
+            job = svc.print_label("image", {**q, "image": meta["id"]}, printer_id=printer,
+                                  size=size, copies=copies)
+        except Exception:                 # rejected (bad params, printer, size): don't keep it
+            svc.uploads.delete(meta["id"])
+            raise
         return await run_in_threadpool(_job_response, svc, job, wait)
 
     # ------------------------------------------------------------------ zpl
