@@ -14,7 +14,7 @@ CASES = [(cls, size, dpi) for cls in labels.all_labels() for size in cls.sizes
          for dpi in (203, 300, 600)]
 # labels whose defaults can't render on their own (they need the user's input)
 EXAMPLE_PARAMS = {
-    "address": {"to": "Jane Doe|1 Main St|Seattle, WA 98101", "sender": "Me|2 Elm St|Kirkland"},
+    "address": {"to": "Jane Doe|1 Main St|Seattle, WA 98101", "sender": "Me|2 Elm St|Tacoma"},
     "image": {"image": "label.png"},
 }
 
@@ -156,11 +156,11 @@ def test_smooth_matches_shape_and_handles_nan():
 
 def test_weather_report_and_options(fake_net):
     from zeprint.labels.weather import WeatherLabel, WeatherParams
-    r = WeatherLabel().render(WeatherParams(home_name="Juanita", hours_ahead=12,
+    r = WeatherLabel().render(WeatherParams(home_name="Lakeside", hours_ahead=12,
                                             wind_unit="mph", temp_unit="celsius"),
                               ctx_for("weather"))
-    assert r.report.startswith("# Weather - Juanita")
-    assert r.data["wind_unit"] == "mph" and "WEATHER - JUANITA" in r.zpl
+    assert r.report.startswith("# Weather - Lakeside")
+    assert r.data["wind_unit"] == "mph" and "WEATHER - LAKESIDE" in r.zpl
     assert r.data["marina_wind"]["max_gust"] > 0
 
 
@@ -190,5 +190,5 @@ class Hello(Label):
     loaded = labels.load_plugins(tmp_path)
     assert loaded == ["hello.py"]
     cls = labels.get("hello-test")
-    r = cls().render(cls.Params(who="Logan"), RenderContext(get_size("2x1"), dpi=203))
-    assert "^FDhi Logan" in r.zpl
+    r = cls().render(cls.Params(who="Sam"), RenderContext(get_size("2x1"), dpi=203))
+    assert "^FDhi Sam" in r.zpl

@@ -14,7 +14,7 @@ from zeprint.uploads import UploadStore, sniff
 from zeprint.zpl import get_size, render_all, split_labels
 
 TO = "Jane Q. Recipient\n1234 Harbor View Blvd Apt 5\nSeattle, WA 98101-2345"
-FROM = "Logan R.|11800 NE Juanita Dr|Kirkland, WA 98034"
+FROM = "A. Sender|2 Elm St|Tacoma, WA 98402"
 
 
 def ctx(size="4x6", dpi=300, files=None):
@@ -46,7 +46,7 @@ def test_address_both(size, dpi):
     r = AddressLabel().render(AddressParams(to=TO, sender=FROM, note="fragile",
                                             reference="Order 1", barcode="10423"), ctx(size, dpi))
     assert label_count(r.zpl) == (1 if size == "4x6" else 2)     # 2x1: from + to labels
-    assert r.data["to"][0] == "Jane Q. Recipient" and r.data["from"][2] == "Kirkland, WA 98034"
+    assert r.data["to"][0] == "Jane Q. Recipient" and r.data["from"][2] == "Tacoma, WA 98402"
     in_bounds(r.zpl, size, dpi)
     if size == "4x6":
         assert "^FDSHIP TO:" in r.zpl and "^BCN" in r.zpl and "^FDOrder 1" in r.zpl
