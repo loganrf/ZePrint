@@ -30,7 +30,7 @@ from . import Label, RenderContext, RenderResult, register
 DG = "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter"
 MD = "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/{sid}.json"
 STATION_PAGE = "https://tidesandcurrents.noaa.gov/stationhome.html?id={sid}"
-DEFAULT_LATLON = (47.7076, -122.2054)  # Kirkland/Juanita, sun-time fallback
+DEFAULT_LATLON = (47.61, -122.33)  # Seattle, sun-time fallback
 APP = "zeprint"
 
 

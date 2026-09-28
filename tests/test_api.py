@@ -59,7 +59,7 @@ def test_preview_render_and_get_preview(client):
     assert r.status_code == 200 and r.headers["content-type"] == "image/png"
     out = client.post("/api/labels/weather/render?preview=true", json={}).json()
     assert out["zpl"].startswith("~SD") and out["report"].startswith("# Weather")
-    assert out["preview_png"] and out["data"]["location"] == "Kirkland"
+    assert out["preview_png"] and out["data"]["location"] == "Seattle"
 
 
 def test_label_defaults_apply(client, printer):

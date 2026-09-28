@@ -43,10 +43,10 @@ WIND_LABEL = {"kn": "kn", "mph": "mph", "kmh": "km/h", "ms": "m/s"}
 
 
 class WeatherParams(BaseModel):
-    home: str = Field("47.7076,-122.2054", title="Home", description="Home location as LAT,LON")
-    home_name: str = Field("Kirkland", max_length=24, title="Home name", description="Name printed in the title")
-    marina: str = Field("47.8115,-122.3870", title="Marina", description="Wind-plot location as LAT,LON")
-    marina_name: str = Field("Port of Edmonds", max_length=32, title="Marina name")
+    home: str = Field("47.61,-122.33", title="Home", description="Home location as LAT,LON")
+    home_name: str = Field("Seattle", max_length=24, title="Home name", description="Name printed in the title")
+    marina: str = Field("47.68,-122.41", title="Marina", description="Wind-plot location as LAT,LON")
+    marina_name: str = Field("Shilshole Bay", max_length=32, title="Marina name")
     wind_unit: Literal["kn", "mph", "kmh", "ms"] = Field("kn", title="Wind unit")
     temp_unit: Literal["fahrenheit", "celsius"] = Field("fahrenheit", title="Temperature unit")
     days: int = Field(4, ge=1, le=7, title="Outlook days", description="Outlook length")

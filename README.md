@@ -142,7 +142,7 @@ curl --data-binary @usps.pdf 'localhost:3231/api/print-file?pages=all&crop=top&w
 
 # an address label; save your return address once as the label's default
 curl -X PUT localhost:3231/api/labels/address/defaults -H 'Content-Type: application/json' \
-     -d '{"sender": "Logan R.|11800 NE Juanita Dr|Kirkland, WA 98034"}'
+     -d '{"sender": "A. Sender|2 Elm St|Tacoma, WA 98402"}'
 curl -X POST localhost:3231/api/labels/address/print -H 'Content-Type: application/json' \
      -d '{"to": "Jane Doe|1 Main St|Seattle, WA 98101", "note": "FRAGILE"}'
 ```
