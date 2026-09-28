@@ -10,7 +10,7 @@ Assistant integration.
 | **Tides** | Day's tide curve, highs/lows, live level, sun and moon, QR to the station | NOAA CO-OPS |
 | **Topographic map** | Contour map of a bounding box, scale bar, coordinates, QR to CalTopo | AWS Terrain Tiles |
 | **Weather** | Current conditions, outlook, and the day's wind at a marina | Open-Meteo |
-| **Address label** | Mailing label from typed addresses. On 4x6: from + to (plus optional banner, reference line and barcode). On 2x1: one address per label. | – |
+| **Address label** | Mailing label from typed addresses, with an optional banner, reference line and barcode. On 4x6: from + to. On 2x1: one address per label. | – |
 | **Image / shipping label** | Any PNG/JPG/GIF/TIFF/WebP/PDF, e.g. a UPS/FedEx/USPS label. It's trimmed, rotated and scaled to fit, with crisp barcodes. | upload or URL |
 | **Test label** | Registration marks, inch ruler, 1/2/4/8-dot hairlines, Code 128 | – |
 
@@ -21,7 +21,8 @@ Assistant integration.
     below, with an optional banner (FRAGILE, PRIORITY), reference line and Code
     128. Set **Print** to `to` or `from` to print one address alone.
   - **On 2x1**, each label holds one address. `both` prints two labels in one
-    job: the return address, then the recipient.
+    job: the return address, then the recipient. The banner, reference and
+    barcode go on the recipient's label (or the only one).
 
   Text is auto-sized to fill the space, so long addresses still fit. Save your
   return address with **Save as defaults** and you only enter the recipient.

@@ -52,6 +52,38 @@ def test_address_both(size, dpi):
         assert "^FDSHIP TO:" in r.zpl and "^BCN" in r.zpl and "^FDOrder 1" in r.zpl
 
 
+@pytest.mark.parametrize("dpi", [203, 300, 600])
+def test_address_2x1_prints_banner_reference_and_barcode(dpi):
+    """2x1 used to drop them silently; they go on the recipient's label."""
+    from zeprint.labels.address import AddressLabel, AddressParams
+    r = AddressLabel().render(AddressParams(to=TO, sender=FROM, note="fragile",
+                                            reference="Order 1", barcode="1Z999AA10123456784"),
+                              ctx("2x1", dpi))
+    frm, to = split_labels(r.zpl)
+    assert "^BC" not in frm and "^GB" not in frm                  # return address: plain
+    assert "^BCN" in to and "^FD1Z999AA10123456784" in to and "^GB" in to
+    in_bounds(r.zpl, "2x1", dpi)
+    pw, _ = get_size("2x1").dots(dpi)
+    module = int(re.search(r"\^BY(\d+)", to).group(1))
+    x = int(re.search(r"\^FO(\d+),\d+\^BC", to).group(1))
+    assert x + (11 * (18 + 3) + 2) * module <= pw                  # whole barcode on the label
+    only = AddressLabel().render(AddressParams(sender=FROM, include="from", barcode="42"),
+                                 ctx("2x1", dpi))
+    assert "^FD42" in only.zpl                                     # the only label gets them
+
+
+def test_address_barcode_fits_or_errors():
+    from zeprint.labels.address import AddressLabel, AddressParams
+    long = "1234567890" * 4                                          # max_length
+    for dpi in (203, 300, 600):                                      # 4x6: narrower bars
+        r = AddressLabel().render(AddressParams(to=TO, barcode=long), ctx("4x6", dpi))
+        module = int(re.search(r"\^BY(\d+)", r.zpl).group(1))
+        x = int(re.search(r"\^FO(\d+),\d+\^BC", r.zpl).group(1))
+        assert x + (11 * (40 + 3) + 2) * module <= get_size("4x6").dots(dpi)[0]
+    with pytest.raises(LabelError, match="too long for a 2x1"):
+        AddressLabel().render(AddressParams(to=TO, barcode=long), ctx("2x1", 300))
+
+
 def test_address_include_and_missing():
     from zeprint.labels.address import AddressLabel, AddressParams
     lbl = AddressLabel()
