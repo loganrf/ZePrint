@@ -2,6 +2,7 @@
 
 import datetime as dt
 import json
+import re
 import socket
 import struct
 import threading
@@ -193,3 +194,21 @@ def test_mqtt_prunes_stale_retained_entities(bridge):
     assert live not in bridge.client.topics()
     bridge.handle(stale, b"")                      # removal echo: ignored
     assert bridge.client.topics().count(stale) == 1
+
+
+@pytest.mark.parametrize("width", [8, 382, 403, 406])
+def test_raster_keeps_the_rightmost_columns(width):
+    """Images whose width isn't a whole byte kept losing up to 7 columns on the
+    right: the last glyph of an address line, a shipping label's border."""
+    import numpy as np
+    from PIL import Image
+    from zeprint.zpl import render_all
+    img = Image.new("L", (width, 6), 255)
+    img.paste(0, (width - 3, 0, width, 6))           # a 3-dot stripe on the right edge
+    z = ZPL("2x1", 203)
+    z.image(None, 0, img)
+    zpl = z.build()
+    x = int(re.search(r"\^FO(-?\d+),", zpl).group(1))
+    assert x >= 0 and x + width <= 406                 # on the label, whole
+    out = np.asarray(render_all(zpl))
+    assert (out[:6, x + width - 3:x + width] == 0).all()

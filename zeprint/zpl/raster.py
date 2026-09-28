@@ -24,15 +24,16 @@ def encode_image(img, threshold: int = 128) -> tuple[bytes, int, int]:
     """
     Threshold a PIL image and pack it for ``^GFA``.
 
-    The width is cropped down to a whole number of bytes, as the original
-    scripts did, so nothing is resampled. Returns ``(packed, row_bytes, rows)``.
+    The width is padded with white up to a whole number of bytes, so nothing is
+    resampled and the rightmost columns aren't lost - text and shipping labels
+    are often drawn right up to the image's edge. Returns
+    ``(packed, row_bytes, rows)``.
     """
     gray = np.asarray(img.convert("L"))
-    w = gray.shape[1] & ~7
-    if w == 0 or gray.shape[0] == 0:
+    if gray.shape[1] == 0 or gray.shape[0] == 0:
         raise ValueError("image is too small to print")
-    black = gray[:, :w] < threshold
-    packed = np.packbits(black, axis=1)
+    black = gray < threshold
+    packed = np.packbits(black, axis=1)          # pads the last byte with 0 (white)
     return packed.tobytes(), packed.shape[1], packed.shape[0]
 
 
