@@ -1,10 +1,11 @@
-# Build-from-source compose (local development, or a stack manager that builds
-# from a Git checkout). For a prebuilt image use deploy/compose.yaml instead.
-# Variables come from .env / the stack environment (see .env.example).
+# ZePrint stack for Docker stack managers (Dockhand, Portainer, Dockge, ...).
+# Pulls the prebuilt image, so no build context is needed: paste this into the
+# stack editor, or point a Git stack at deploy/compose.yaml. Set the variables
+# in the stack's environment (see .env.example). All are optional: without
+# ZEPRINT_PRINTER_URI, add the printer in the web UI after the first start.
 services:
   zeprint:
-    build: .
-    image: zeprint:local
+    image: ${ZEPRINT_IMAGE:-ghcr.io/loganrf/zeprint:latest}
     container_name: zeprint
     restart: unless-stopped
     ports:
@@ -13,19 +14,18 @@ services:
       - zeprint-data:/data            # config.json, caches, plugins/
     environment:
       TZ: ${TZ:-America/Los_Angeles}
-      # First-run printer: the networked GX430t on its raw port. After the
-      # first start, manage printers (address, DPI, label size) in the web UI.
-      ZEPRINT_PRINTER_URI: ${ZEPRINT_PRINTER_URI:-tcp://192.168.1.50:9100}
+      # First-run printer; after that, manage printers in the web UI.
+      ZEPRINT_PRINTER_URI: ${ZEPRINT_PRINTER_URI:-}   # e.g. tcp://192.168.1.50:9100
       ZEPRINT_PRINTER_NAME: ${ZEPRINT_PRINTER_NAME:-Zebra GX430t}
       ZEPRINT_PRINTER_DPI: ${ZEPRINT_PRINTER_DPI:-300}
       ZEPRINT_LABEL_SIZE: ${ZEPRINT_LABEL_SIZE:-4x6}
       ZEPRINT_API_TOKEN: ${ZEPRINT_API_TOKEN:-}
       ZEPRINT_URL: ${ZEPRINT_URL:-}
+      # Home Assistant (MQTT discovery) - leave MQTT_HOST empty to disable
       MQTT_HOST: ${MQTT_HOST:-}
       MQTT_PORT: ${MQTT_PORT:-1883}
       MQTT_USERNAME: ${MQTT_USERNAME:-}
       MQTT_PASSWORD: ${MQTT_PASSWORD:-}
-    # (USB instead of network: see "Connecting the printer" in the README)
 
 volumes:
   zeprint-data:

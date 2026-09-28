@@ -21,14 +21,32 @@ need an API key.
 
 ```sh
 git clone https://github.com/loganrf/ZePrint && cd ZePrint
-# edit docker-compose.yml: printer address, DPI, label size, TZ
+cp .env.example .env        # set ZEPRINT_PRINTER_URI=tcp://<printer-ip>:9100, DPI, size, TZ
 docker compose up -d --build
 open http://localhost:8080
 ```
 
 The `ZEPRINT_PRINTER_*` variables only seed the **first** start. After that,
 manage printers in the web UI (**Printers** tab). Settings live in
-`./data/config.json`.
+`config.json` in the `zeprint-data` volume.
+
+### Deploying as a stack (Dockhand, Portainer, Dockge…)
+
+`deploy/compose.yaml` pulls the prebuilt multi-arch image
+`ghcr.io/loganrf/zeprint` (amd64 + arm64), so it needs no build context. The
+image is published by `.github/workflows/publish.yml` on every push to `main`,
+on `v*` tags, or when you run the workflow manually.
+
+- **Git stack:** repository `https://github.com/loganrf/ZePrint` (public, so no
+  credentials needed), branch `main`, compose file `deploy/compose.yaml`.
+  Enable auto-sync or the webhook to redeploy on push.
+- **Editor stack:** paste `deploy/compose.yaml` into the stack editor.
+
+In both cases, put the variables from `.env.example` in the stack's environment.
+At minimum set `ZEPRINT_PRINTER_URI=tcp://<printer-ip>:9100`, `TZ`, and
+optionally the `MQTT_*` variables. If the GHCR package shows as private after
+its first publish, either make it public (package settings on GitHub) or add
+`ghcr.io` as a registry with a read-only token.
 
 ### Connecting the printer
 

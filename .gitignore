@@ -8,3 +8,4 @@ dist/
 venv/
 data/
 *.zpl
+.env
