@@ -56,8 +56,11 @@ async function errorText(res) {
 
 function askToken() {
   const dlg = $("#token-dialog");
-  return new Promise(resolve => {
-    $("#token-dialog-form").onsubmit = () => { setToken($("#token-dialog-input").value.trim()); resolve(); };
+  return new Promise((resolve, reject) => {
+    let submitted = false;
+    $("#token-dialog-form").onsubmit = () => { submitted = true; setToken($("#token-dialog-input").value.trim()); };
+    // fires for submit and for Esc; Esc must not leave the caller hanging
+    dlg.onclose = () => (submitted ? resolve() : reject(new Error("an API token is required")));
     if (!dlg.open) dlg.showModal();
   });
 }
@@ -348,8 +351,11 @@ async function savePrinter(ev) {
 /* --------------------------------------------------------------- jobs */
 
 let jobsTimer = null;
+let jobsLoading = false;
 async function refreshJobs() {
   clearTimeout(jobsTimer);
+  if (jobsLoading) return;           // one poll loop, however often this is called
+  jobsLoading = true;
   const rows = $("#job-rows");
   try {
     const jobs = await api("jobs?limit=50");
@@ -361,7 +367,8 @@ async function refreshJobs() {
       el("td", {}, el("span", { class: `st ${j.status}`, text: j.status })),
       el("td", { class: j.error ? "error" : "muted", text: j.error || (j.bytes ? `${Math.round(j.bytes / 1024)} KiB` : "") }),
     )) : [el("tr", {}, el("td", { colspan: 6, class: "empty", text: "No jobs yet." }))]));
-  } catch (e) { /* keep last view */ }
+  } catch (e) { /* keep last view */ } finally { jobsLoading = false; }
+  clearTimeout(jobsTimer);
   if ($("#view-jobs").classList.contains("active")) jobsTimer = setTimeout(refreshJobs, 3000);
 }
 

@@ -71,9 +71,14 @@ class JobQueue:
         with self._lock:
             self._jobs[job.id] = job
             self._done[job.id] = threading.Event()
-            while len(self._jobs) > self.history:
-                old, _ = self._jobs.popitem(last=False)
+            # trim history, oldest first, but never forget a job that hasn't finished
+            excess = len(self._jobs) - self.history
+            for old in [j.id for j in self._jobs.values() if j.status in ("done", "error")]:
+                if excess <= 0:
+                    break
+                del self._jobs[old]
                 self._done.pop(old, None)
+                excess -= 1
         self._emit(job)
         self._q.put((job.id, work))
         return job.model_copy()

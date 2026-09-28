@@ -37,12 +37,14 @@ import re
 import threading
 from typing import Any
 
+from pydantic import ValidationError
+
 from .. import __version__, labels
 from ..errors import ZePrintError
+from ..schemas import LabelRequest
+from ..service import format_validation
 
 log = logging.getLogger(__name__)
-
-_RESERVED = {"params", "printer", "size", "copies", "label"}
 
 
 def _slug(s: str) -> str:
@@ -66,6 +68,7 @@ class MqttBridge:
         self.url = url
         self.client = None
         self._published_printers: set[str] = set()
+        self._discovery_lock = threading.Lock()   # paho thread + API threads publish
         self._stop = threading.Event()
         self._unsub = None
         self._poller: threading.Thread | None = None
@@ -98,9 +101,9 @@ class MqttBridge:
         return {"unique_id": f"{self.node}_{object_id}",
                 "availability_topic": self.availability_topic, "device": self.device()}
 
-    def discovery_messages(self) -> list[tuple[str, dict | None]]:
-        """(topic, payload) for every entity; payload None removes a stale entity."""
-        msgs: list[tuple[str, dict | None]] = []
+    def entity_configs(self) -> list[tuple[str, dict]]:
+        """(topic, payload) for every entity that should exist now. No side effects."""
+        msgs: list[tuple[str, dict]] = []
         for cls in labels.all_labels():
             oid = f"print_{_slug(cls.id)}"
             msgs.append((f"{self.prefix}/button/{self.node}/{oid}/config", {
@@ -111,19 +114,26 @@ class MqttBridge:
             **self._common("last_job"), "name": "Last print job", "icon": "mdi:printer-pos",
             "state_topic": f"{self.base}/job", "value_template": "{{ value_json.status }}",
             "json_attributes_topic": f"{self.base}/job"}))
-        current = set()
         for p in self.svc.settings.printers:
-            current.add(p.id)
             oid = f"printer_{_slug(p.id)}"
             msgs.append((f"{self.prefix}/sensor/{self.node}/{oid}/config", {
                 **self._common(oid), "name": f"{p.name} status", "icon": "mdi:printer",
                 "state_topic": f"{self.base}/printer/{p.id}",
                 "value_template": "{{ value_json.state }}",
                 "json_attributes_topic": f"{self.base}/printer/{p.id}"}))
-        for gone in self._published_printers - current:
-            msgs.append((f"{self.prefix}/sensor/{self.node}/printer_{_slug(gone)}/config", None))
-        self._published_printers = current
         return msgs
+
+    def discovery_messages(self) -> list[tuple[str, dict | None]]:
+        """Current entity configs, plus removals (payload None) for printers that were
+        published earlier in this run and have since been deleted."""
+        with self._discovery_lock:
+            msgs: list[tuple[str, dict | None]] = list(self.entity_configs())
+            current = {p.id for p in self.svc.settings.printers}
+            for gone in self._published_printers - current:
+                msgs.append((f"{self.prefix}/sensor/{self.node}/printer_{_slug(gone)}/config",
+                             None))
+            self._published_printers = current
+            return msgs
 
     # ----------------------------------------------------------- lifecycle
 
@@ -183,7 +193,9 @@ class MqttBridge:
             return
         log.info("MQTT connected")
         client.subscribe([(f"{self.base}/print", 1), (f"{self.base}/print/+", 1),
-                          (f"{self.base}/raw/+", 1), (f"{self.prefix}/status", 1)])
+                          (f"{self.base}/raw/+", 1), (f"{self.prefix}/status", 1),
+                          # retained configs from earlier runs, to prune stale entities
+                          (f"{self.prefix}/+/{self.node}/+/config", 1)])
         self._publish(self.availability_topic, "online", retain=True)
         self.publish_discovery()
         # status queries can take seconds; keep them off paho's network thread
@@ -202,6 +214,13 @@ class MqttBridge:
             if text == "online":            # Home Assistant restarted: re-announce
                 self.publish_discovery()
             return
+        if topic.startswith(f"{self.prefix}/") and topic.endswith("/config"):
+            # a retained entity config (maybe from before a restart): remove it if
+            # it no longer matches a label or printer
+            if text and topic not in {t for t, _ in self.entity_configs()}:
+                log.info("removing stale Home Assistant entity %s", topic)
+                self._publish(topic, None, retain=True)
+            return
         try:
             if topic.startswith(f"{self.base}/raw/"):
                 printer = topic[len(self.base) + 5:]
@@ -217,13 +236,17 @@ class MqttBridge:
                 body = {} if text in ("", "PRESS") else self._json(text)
             else:
                 return
-            params = {**{k: v for k, v in body.items() if k not in _RESERVED},
-                      **(body.get("params") or {})}
-            self.svc.print_label(label, params, printer_id=body.get("printer"),
-                                 size=body.get("size"), copies=int(body.get("copies", 1)),
-                                 source="mqtt")
-        except (ZePrintError, ValueError) as e:
-            log.warning("MQTT command on %s rejected: %s", topic, e)
+            try:                        # same validation (copies 1-100, types) as the API
+                req = LabelRequest.model_validate(body)
+            except ValidationError as e:
+                raise ValueError(format_validation(e)) from None
+            self.svc.print_label(label, req.merged(), printer_id=req.printer, size=req.size,
+                                 copies=req.copies, source="mqtt")
+        except Exception as e:
+            if not isinstance(e, (ZePrintError, ValueError)):
+                log.exception("MQTT command on %s failed", topic)
+            else:
+                log.warning("MQTT command on %s rejected: %s", topic, e)
             self._publish(f"{self.base}/error", {"topic": topic, "error": str(e)})
             self._publish(f"{self.base}/job", {"status": "error", "error": str(e),
                                                "source": "mqtt"}, retain=True)

@@ -9,8 +9,9 @@ Data: NOAA CO-OPS Tides & Currents (https://tidesandcurrents.noaa.gov), keyless.
   station name: mdapi/prod/webapi/stations/<id>.json
 Sun times (NOAA solar algorithm) and moon phase are computed locally.
 
-Times are station-local (NOAA ``lst_ldt``); "now" uses the service timezone, so
-keep that set to where your stations are.
+Times are station-local (NOAA ``lst_ldt``). The station's UTC offset comes from
+its metadata (``timezonecorr`` + ``observedst``, with the US DST rule), so "now",
+the default date and sun times are right whatever timezone the service runs in.
 """
 
 from __future__ import annotations
@@ -56,8 +57,35 @@ def _parse(rows):
     return out
 
 
+def us_dst(standard_local: dt.datetime) -> bool:
+    """US daylight time (2007 rules), judged on local *standard* time: from 2:00 on
+    the second Sunday of March to 2:00 daylight (= 1:00 standard) on the first
+    Sunday of November."""
+    y = standard_local.year
+    mar8, nov1 = dt.datetime(y, 3, 8), dt.datetime(y, 11, 1)
+    start = mar8 + dt.timedelta(days=(6 - mar8.weekday()) % 7, hours=2)
+    end = nov1 + dt.timedelta(days=(6 - nov1.weekday()) % 7, hours=1)
+    return start <= standard_local.replace(tzinfo=None) < end
+
+
+def station_tz(tzcorr: float, observes_dst: bool, at: dt.datetime) -> dt.timezone:
+    """The station's fixed UTC offset in effect at instant ``at`` (aware)."""
+    standard = at.astimezone(dt.timezone.utc).replace(tzinfo=None) + dt.timedelta(hours=tzcorr)
+    hours = tzcorr + (1 if observes_dst and us_dst(standard) else 0)
+    return dt.timezone(dt.timedelta(hours=hours))
+
+
+def fetch_station(station: str) -> dict:
+    """Station metadata (name, lat/lng, timezonecorr, observedst); {} if unavailable."""
+    try:
+        md = net.fetch_json(MD.format(sid=station), source="NOAA CO-OPS", ttl=86400)
+        return (md.get("stations") or [{}])[0] or {}
+    except Exception:
+        return {}
+
+
 def fetch_tides(station: str, date: dt.date):
-    """Returns (curve[(t, ft)], events[(t, ft, 'H'/'L')], name, observed, (lat, lon))."""
+    """Returns (curve[(t, ft)], events[(t, ft, 'H'/'L')], observed)."""
     curve_raw = _dg(station, date, "predictions", "&interval=6")
     if "predictions" not in curve_raw:
         msg = (curve_raw.get("error") or {}).get("message", "unknown error")
@@ -69,15 +97,6 @@ def fetch_tides(station: str, date: dt.date):
     if len(curve) < 2:
         raise LabelError(f"NOAA returned too few predictions for station {station}")
 
-    name, latlon = None, (None, None)
-    try:
-        md = net.fetch_json(MD.format(sid=station), source="NOAA CO-OPS", ttl=86400)
-        st = (md.get("stations") or [{}])[0]
-        name = st.get("name")
-        latlon = (st.get("lat"), st.get("lng"))
-    except Exception:
-        pass
-
     observed = None
     try:
         wl = _dg(station, date, "water_level", "&date=latest", ttl=120).get("data") or []
@@ -85,7 +104,7 @@ def fetch_tides(station: str, date: dt.date):
             observed = (dt.datetime.strptime(wl[-1]["t"], "%Y-%m-%d %H:%M"), float(wl[-1]["v"]))
     except Exception:
         pass
-    return curve, events, name, observed, latlon
+    return curve, events, observed
 
 
 # ---------------------------------------------------------------- sun / moon
@@ -319,23 +338,41 @@ class TidesLabel(Label):
     description = "Today's tide curve, highs & lows, sun and moon for a NOAA tide station."
     icon = "mdi:waves"
     Params = TidesParams
+    fetch_outside_lock = True
 
     def render(self, p: TidesParams, ctx: RenderContext) -> RenderResult:
-        date = p.date or ctx.now.date()
-        now = ctx.now.replace(tzinfo=None)
-        curve, events, name, observed, latlon = fetch_tides(p.station, date)
-        lat, lon = latlon if latlon[0] is not None else DEFAULT_LATLON
+        st = fetch_station(p.station)
+        try:
+            tz_now = station_tz(float(st["timezonecorr"]), bool(st.get("observedst")), ctx.now)
+        except (KeyError, TypeError, ValueError):
+            tz_now = ctx.tz                          # metadata unavailable: service timezone
+        local_now = ctx.now.astimezone(tz_now)
+        now = local_now.replace(tzinfo=None)         # NOAA lst_ldt times are naive local
+        date = p.date or local_now.date()
+        noon = dt.datetime(date.year, date.month, date.day, 12, tzinfo=dt.timezone.utc)
+        try:
+            tz_day = station_tz(float(st["timezonecorr"]), bool(st.get("observedst")), noon)
+        except (KeyError, TypeError, ValueError):
+            tz_day = ctx.tz
+        name = st.get("name")
+        lat, lon = ((st["lat"], st["lng"]) if st.get("lat") is not None and st.get("lng") is not None
+                    else DEFAULT_LATLON)
         lat, lon = float(lat), float(lon)
+
+        curve, events, observed = fetch_tides(p.station, date)
         page_url = STATION_PAGE.format(sid=p.station)
         ni = min(range(len(curve)), key=lambda k: abs((curve[k][0] - now).total_seconds()))
         now_level = curve[ni][1]
 
         z = ctx.zpl()
-        if ctx.size.id == "2x1":
-            layout_2x1(z, ctx, p.station, name, date, curve, events, now, now_level, observed)
-        else:
-            layout_4x6(z, ctx, p.station, name, date, curve, events, now, observed, now_level,
-                       sun_times(date, lat, lon, ctx.tz), moon_phase(date), page_url)
+        with ctx.drawing():
+            if ctx.size.id == "2x1":
+                layout_2x1(z, ctx, p.station, name, date, curve, events, now, now_level,
+                           observed)
+            else:
+                layout_4x6(z, ctx, p.station, name, date, curve, events, now, observed,
+                           now_level, sun_times(date, lat, lon, tz_day), moon_phase(date),
+                           page_url)
 
         nxt = next((e for e in events if e[0] >= now), None)
         data = {"station": p.station, "name": name, "date": date.isoformat(),

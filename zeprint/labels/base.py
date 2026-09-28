@@ -28,6 +28,7 @@ up everywhere: REST API, web UI, CLI and MQTT discovery.
 from __future__ import annotations
 
 import io
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, tzinfo
 from pathlib import Path
@@ -36,6 +37,9 @@ from typing import Any, ClassVar
 from pydantic import BaseModel
 
 from ..zpl.builder import DESIGN_DPI, ZPL, LabelSize
+
+# matplotlib isn't thread-safe (shared font objects), so figure work is serialized.
+_DRAW_LOCK = threading.RLock()
 
 
 @dataclass
@@ -65,6 +69,14 @@ class RenderContext:
     def k(self) -> float:
         """Device dots per design unit."""
         return self.dpi / DESIGN_DPI
+
+    def drawing(self):
+        """
+        Context manager to hold while building and rasterizing matplotlib figures.
+        Only needed by labels that set ``fetch_outside_lock = True``; otherwise the
+        service holds it for the whole render.
+        """
+        return _DRAW_LOCK
 
     def zpl(self) -> ZPL:
         return ZPL(self.size, self.dpi, darkness=self.darkness, speed=self.speed,
@@ -114,6 +126,9 @@ class Label:
     icon: ClassVar[str] = "mdi:label-outline"    # Material Design icon, used by Home Assistant
     sizes: ClassVar[tuple[str, ...]] = ("4x6", "2x1")
     Params: ClassVar[type[BaseModel]]
+    # True: render() fetches its data first and takes ``ctx.drawing()`` only around
+    # figure work, so a slow data source doesn't stall other renders.
+    fetch_outside_lock: ClassVar[bool] = False
 
     def render(self, params: BaseModel, ctx: RenderContext) -> RenderResult:  # pragma: no cover
         raise NotImplementedError

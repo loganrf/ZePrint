@@ -131,7 +131,9 @@ class FakeNet:
         if "tidesandcurrents" in host:
             if "/mdapi/" in url:
                 return json.dumps({"stations": [{"name": "Seattle", "lat": 47.6026,
-                                                 "lng": -122.3393}]}).encode()
+                                                 "lng": -122.3393, "timezone": "PST",
+                                                 "timezonecorr": -8,
+                                                 "observedst": True}]}).encode()
             date = dt.datetime.strptime(qs["begin_date"][0], "%Y%m%d").date()
             if qs["product"][0] == "water_level":
                 return json.dumps({"data": [{"t": f"{date} 10:24", "v": "7.412"}]}).encode()

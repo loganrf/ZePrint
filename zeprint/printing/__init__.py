@@ -72,8 +72,11 @@ class TcpTransport(Transport):
 
     def query(self, command: bytes, frames: int = 1, timeout: float = 3.0) -> bytes | None:
         with self._connect() as s:
-            s.sendall(command)
-            return _collect(lambda: s.recv(4096), s.settimeout, frames, timeout)
+            try:
+                s.sendall(command)
+                return _collect(lambda: s.recv(4096), s.settimeout, frames, timeout)
+            except OSError as e:
+                raise PrinterError(f"{self.describe()} dropped the status query ({e})") from e
 
 
 @dataclass
@@ -111,7 +114,10 @@ class DeviceTransport(Transport):
         except OSError as e:
             raise self._error(e) from e
         try:
-            os.write(fd, command)
+            try:
+                os.write(fd, command)
+            except OSError as e:
+                raise self._error(e) from e
 
             def recv():
                 r, _, _ = select.select([fd], [], [], 0.2)
@@ -121,6 +127,8 @@ class DeviceTransport(Transport):
                     return os.read(fd, 4096)
                 except BlockingIOError:
                     return None
+                except OSError as e:
+                    raise self._error(e) from e
             return _collect(recv, None, frames, timeout)
         finally:
             os.close(fd)

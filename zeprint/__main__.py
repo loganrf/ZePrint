@@ -74,13 +74,20 @@ def cmd_render(args, svc) -> int:
 def cmd_print(args, svc) -> int:
     printer_id = args.printer
     if args.uri:
+        from pydantic import ValidationError
         from .config import PrinterConfig
+        from .service import format_validation
         current = svc.settings.printer(printer_id)
-        adhoc = PrinterConfig(id="cli", name="command line", uri=args.uri,
-                              dpi=args.dpi or (current.dpi if current else 300),
-                              label_size=args.size or (current.label_size if current else "4x6"))
-        result = svc.render(args.label, _params(args.param), size=adhoc.label_size,
-                            dpi=adhoc.dpi, copies=args.copies)
+        try:
+            adhoc = PrinterConfig(id="cli", name="command line", uri=args.uri,
+                                  dpi=args.dpi or (current.dpi if current else 300),
+                                  label_size=args.size or (current.label_size if current
+                                                           else "4x6"))
+        except ValidationError as e:
+            print(f"error: {format_validation(e)}", file=sys.stderr)
+            return 2
+        result = svc.render(args.label, _params(args.param), printer=adhoc,
+                            size=adhoc.label_size, copies=args.copies)
         n = svc.send(adhoc, result.zpl, result.title)
         print(f"sent {n} bytes to {args.uri}", file=sys.stderr)
         return 0

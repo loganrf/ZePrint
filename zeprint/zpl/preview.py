@@ -20,6 +20,11 @@ from .raster import decompress_hex
 
 _CMD = re.compile(r"[\^~]([A-Za-z@][A-Za-z0-9@]?)")
 
+# Bounds for untrusted ZPL (the preview endpoint renders whatever it is sent):
+MAX_SIDE = 8000                # dots per side (26.7 in at 300 dpi)
+MAX_FONT = 2000
+MAX_TEXT = 2000                # characters drawn per field
+
 
 @lru_cache(maxsize=1)
 def _font_file() -> str | None:
@@ -86,7 +91,8 @@ def render(zpl: str, default_size: tuple[int, int] = (1200, 1800)) -> Image.Imag
     mll = re.search(r"\^LL(\d+)", zpl)
     cw = int(mpw.group(1)) if mpw else default_size[0]
     ch = int(mll.group(1)) if mll else default_size[1]
-    canvas = Image.new("L", (max(1, cw), max(1, ch)), 255)
+    cw, ch = max(1, min(cw, MAX_SIDE)), max(1, min(ch, MAX_SIDE))
+    canvas = Image.new("L", (cw, ch), 255)
     d = ImageDraw.Draw(canvas)
 
     lhx = lhy = 0
@@ -113,12 +119,12 @@ def render(zpl: str, default_size: tuple[int, int] = (1200, 1800)) -> Image.Imag
             # ^A0N,h,w  (font name is the char after ^A)
             parts = (code[1:] + arg).split(",")
             h = _ints(",".join(parts[1:]), 2, [font_h, 0])
-            font_h = max(1, h[0])
+            font_h = max(1, min(h[0], MAX_FONT, ch))
             font_w = h[1] or font_h
         elif code == "CF":
             # ^CFf,h,w - font name, then height/width
             h = _ints(",".join(arg.split(",")[1:]), 2, [font_h, 0])
-            font_h = max(1, h[0])
+            font_h = max(1, min(h[0], MAX_FONT, ch))
             font_w = h[1] or font_h
         elif code == "FB":
             p = arg.split(",")
@@ -128,13 +134,16 @@ def render(zpl: str, default_size: tuple[int, int] = (1200, 1800)) -> Image.Imag
             fh = arg.strip()[:1] or "_"
         elif code == "BY":
             by_module, _ratio, by_height = _ints(arg, 3, [by_module, 3, by_height])
+            by_module = max(1, min(by_module, 10))
+            by_height = max(1, min(by_height, ch))
         elif code == "BQ":
             p = arg.split(",")
             mag = _ints(p[2] if len(p) > 2 else "", 1, [2])[0]
-            pending = ("qr", max(1, mag))
+            pending = ("qr", max(1, min(mag, 10)))
         elif code == "BC":
             p = arg.split(",")
             h = _ints(p[1] if len(p) > 1 else "", 1, [by_height])[0] or by_height
+            h = max(1, min(h, ch))
             interp = (p[2].strip().upper() != "N") if len(p) > 2 and p[2].strip() else True
             pending = ("bc", h, interp)
         elif code == "GB":
@@ -150,6 +159,13 @@ def render(zpl: str, default_size: tuple[int, int] = (1200, 1800)) -> Image.Imag
             if len(parts) == 5 and parts[0].strip().upper() == "A":
                 try:
                     total, rb = int(parts[1]), int(parts[3])
+                    if not 0 < rb <= (MAX_SIDE + 7) // 8:
+                        raise ValueError("row width out of range")
+                    # rows past the label are invisible; never decode more than a label's worth
+                    total = min(total, rb * (ch - y), rb * MAX_SIDE) if y < ch else 0
+                    if total < rb:
+                        raise ValueError("nothing visible")
+                    total -= total % rb
                     raw = decompress_hex(parts[4], rb, total)
                     img = Image.frombytes("1", (rb * 8, total // rb),
                                           bytes(b ^ 0xFF for b in raw)).convert("L")
@@ -157,7 +173,7 @@ def render(zpl: str, default_size: tuple[int, int] = (1200, 1800)) -> Image.Imag
                 except (ValueError, ZeroDivisionError):
                     d.rectangle([x, y, x + 40, y + 40], outline=0)
         elif code == "FD" or code == "FV":
-            text = _unescape(arg, fh) if fh else arg
+            text = (_unescape(arg, fh) if fh else arg)[:MAX_TEXT]
             if pending and pending[0] == "qr":
                 _draw_qr(canvas, d, x, y, text, pending[1])
             elif pending and pending[0] == "bc":
@@ -169,12 +185,22 @@ def render(zpl: str, default_size: tuple[int, int] = (1200, 1800)) -> Image.Imag
     return canvas
 
 
+def _fit(text: str, avail: float, h: int) -> str:
+    """Trim text that can't fit anyway (no glyph is narrower than ~0.15 h), so a
+    hostile field can't make Pillow allocate a bitmap far wider than the label."""
+    return text[:max(1, int(avail / (0.15 * h)) + 1)] if avail > 0 else ""
+
+
 def _draw_text(d: ImageDraw.ImageDraw, x: int, y: int, text: str, h: int, fb) -> None:
+    W, H = d.im.size
+    if x >= W or y >= H:
+        return
     f = _font(h)
     if not fb or fb[0] <= 0:
-        d.text((x, y), text, fill=0, font=f)
+        d.text((x, y), _fit(text, W - x, h), fill=0, font=f)
         return
     width, max_lines, _, align = fb
+    width = min(width, W)
     lines, line = [], ""
     for word in text.split(" "):
         trial = (line + " " + word).strip()
@@ -189,6 +215,9 @@ def _draw_text(d: ImageDraw.ImageDraw, x: int, y: int, text: str, h: int, fb) ->
         lines = lines[:max_lines - 1] + [" ".join(lines[max_lines - 1:])]
     yy = y
     for ln in lines:
+        if yy >= H:
+            break
+        ln = _fit(ln, width, h)
         tw = d.textlength(ln, font=f)
         xx = x + (width - tw if align == "R" else (width - tw) / 2 if align == "C" else 0)
         d.text((xx, yy), ln, fill=0, font=f)
@@ -220,12 +249,17 @@ def _draw_code128(d: ImageDraw.ImageDraw, x: int, y: int, data: str, module: int
     modules = 11 * (len(data) + 3) + 2
     rnd = random.Random(data)
     xx = x
+    right = d.im.size[0]
     for i in range(modules):
+        if xx >= right:
+            break
         if i < 2 or i >= modules - 2 or rnd.random() < 0.5:
             d.rectangle([xx, y, xx + module - 1, y + h - 1], fill=0)
         xx += module
     if interp:
-        f = _font(max(12, int(h * 0.22)))
+        fh = max(12, int(h * 0.22))
+        f = _font(fh)
+        data = _fit(data, right - x, fh)
         tw = d.textlength(data, font=f)
         d.text((x + (modules * module - tw) / 2, y + h + 4), data, fill=0, font=f)
 
