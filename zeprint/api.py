@@ -296,6 +296,58 @@ def create_app(service: ZePrint | None = None, *, token: str | None = None,
         job = svc.print_raw(data, printer_id, title="raw ZPL")
         return await run_in_threadpool(_job_response, svc, job, wait)
 
+    # --------------------------------------------------------------- uploads
+
+    @api.post("/uploads", status_code=201)
+    async def upload(request: Request, filename: Optional[str] = None):
+        """Store a PDF or image (raw request body) for the image label; returns its id.
+        e.g. curl --data-binary @label.pdf -H 'X-Filename: label.pdf' .../api/uploads"""
+        data = await _read_body(request)
+        name = filename or request.headers.get("x-filename")
+        return await run_in_threadpool(svc.uploads.put, data, name)
+
+    @api.get("/uploads")
+    def list_uploads():
+        return svc.uploads.list()
+
+    @api.get("/uploads/{upload_id}")
+    def get_upload(upload_id: str):
+        return svc.uploads.meta(upload_id)
+
+    @api.get("/uploads/{upload_id}/file", response_class=Response)
+    def get_upload_file(upload_id: str):
+        data, meta = svc.uploads.get(upload_id)
+        return Response(data, media_type=meta["content_type"])
+
+    @api.delete("/uploads/{upload_id}", status_code=204)
+    def delete_upload(upload_id: str):
+        svc.uploads.delete(upload_id)
+        return Response(status_code=204)
+
+    @api.post("/print-file")
+    async def print_file(request: Request):
+        """
+        One shot: upload the request body (PDF/image) and print it with the image
+        label. Query string: printer, size, copies, wait, and any image-label
+        parameter (pages, rotate, trim, crop, fit, dither, threshold, margin).
+        e.g. curl --data-binary @label.pdf '.../api/print-file?pages=all&wait=30'
+        """
+        data = await _read_body(request)
+        q = {k: v for k, v in request.query_params.items() if k != "token"}
+        try:
+            wait = float(q.pop("wait", 0) or 0)
+            copies = int(q.pop("copies", 1) or 1)
+        except ValueError:
+            raise InvalidRequest("wait and copies must be numbers") from None
+        if not 0 <= wait <= 300 or not 1 <= copies <= 100:
+            raise InvalidRequest("wait must be 0-300 and copies 1-100")
+        printer, size = q.pop("printer", None), q.pop("size", None)
+        name = q.pop("filename", None) or request.headers.get("x-filename")
+        meta = await run_in_threadpool(svc.uploads.put, data, name)
+        job = svc.print_label("image", {**q, "image": meta["id"]}, printer_id=printer,
+                              size=size, copies=copies)
+        return await run_in_threadpool(_job_response, svc, job, wait)
+
     # ------------------------------------------------------------------ zpl
 
     @api.post("/zpl/preview", response_class=Response,

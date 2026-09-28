@@ -6,6 +6,8 @@ Command line.
     python -m zeprint render tides -p station=9446484 --size 2x1 --preview t.png
     python -m zeprint render satellite -p norad=25544 --zpl iss.zpl --dpi 203
     python -m zeprint print weather --printer zebra
+    python -m zeprint print image -p image=@ups-label.pdf -p pages=all
+    python -m zeprint print address -p "to=Jane Doe|1 Main St|Seattle, WA 98101"
     python -m zeprint print topo -p corner1=46.9,-121.8 -p corner2=46.78,-121.68 \\
         --uri tcp://192.168.1.50:9100                # one-off printer, no config needed
 
@@ -21,12 +23,21 @@ import os
 import sys
 
 
-def _params(pairs: list[str]) -> dict:
+def _params(pairs: list[str], svc=None) -> dict:
+    """-p KEY=VALUE pairs. KEY=@path uploads a local file and passes its id
+    (e.g. -p image=@label.pdf)."""
     out = {}
     for pair in pairs or []:
         if "=" not in pair:
             raise SystemExit(f"bad -p {pair!r}; use KEY=VALUE")
         k, v = pair.split("=", 1)
+        if v.startswith("@") and svc is not None:
+            path = os.path.expanduser(v[1:])
+            try:
+                with open(path, "rb") as f:
+                    v = svc.uploads.put(f.read(), os.path.basename(path))["id"]
+            except OSError as e:
+                raise SystemExit(f"can't read {path}: {e}") from None
         out[k.strip()] = v
     return out
 
@@ -52,7 +63,7 @@ def cmd_labels(args, svc) -> int:
 
 def cmd_render(args, svc) -> int:
     from .zpl import render_png
-    result = svc.render(args.label, _params(args.param), printer_id=args.printer,
+    result = svc.render(args.label, _params(args.param, svc), printer_id=args.printer,
                         size=args.size, dpi=args.dpi, copies=args.copies)
     if args.zpl:
         with open(args.zpl, "w") as f:
@@ -86,14 +97,14 @@ def cmd_print(args, svc) -> int:
         except ValidationError as e:
             print(f"error: {format_validation(e)}", file=sys.stderr)
             return 2
-        result = svc.render(args.label, _params(args.param), printer=adhoc,
+        result = svc.render(args.label, _params(args.param, svc), printer=adhoc,
                             size=adhoc.label_size, copies=args.copies)
         n = svc.send(adhoc, result.zpl, result.title)
         print(f"sent {n} bytes to {args.uri}", file=sys.stderr)
         return 0
     svc.start()
     try:
-        job = svc.print_label(args.label, _params(args.param), printer_id=printer_id,
+        job = svc.print_label(args.label, _params(args.param, svc), printer_id=printer_id,
                               size=args.size, copies=args.copies, source="cli")
         job = svc.jobs.wait(job.id, 300)
     finally:

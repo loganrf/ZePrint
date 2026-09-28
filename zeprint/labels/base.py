@@ -32,7 +32,7 @@ import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, tzinfo
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, Callable, ClassVar
 
 from pydantic import BaseModel
 
@@ -56,6 +56,8 @@ class RenderContext:
     now: datetime | None = None
     cache_dir: Path | None = None
     printer_name: str | None = None
+    # resolves an upload id or http(s) URL to (bytes, {"filename", "content_type", ...})
+    open_file: Callable[[str], tuple[bytes, dict]] | None = None
 
     def __post_init__(self):
         if self.now is None:

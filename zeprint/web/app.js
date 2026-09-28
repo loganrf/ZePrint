@@ -107,6 +107,13 @@ function paramField(name, raw, value) {
   const title = p.title || name;
   const help = p.description ? el("span", { class: "field-help", text: p.description }) : null;
   let input;
+  if (p.format === "textarea") {
+    input = el("textarea", { name, rows: 4, maxlength: p.maxLength, placeholder: "one line per row" });
+    input.value = value ?? "";
+    input.dataset.kind = "string";
+    return el("label", { class: "wide" }, title, input, help);
+  }
+  if (p.format === "zeprint-file") return fileField(name, title, value, help);
   if (p.enum) {
     input = el("select", { name }, p.nullable ? el("option", { value: "", text: "(default)" }) : null,
       p.enum.map(v => el("option", { value: v, text: v })));
@@ -133,6 +140,30 @@ function paramField(name, raw, value) {
   input.dataset.kind = p.type || "string";
   input.dataset.nullable = p.nullable ? "1" : "";
   return el("label", {}, title, input, help);
+}
+
+// file parameter: pick a file (uploaded to the server, its id fills the field) or paste a URL
+function fileField(name, title, value, help) {
+  const input = el("input", { type: "text", name, placeholder: "upload a file, or paste an http(s) URL" });
+  input.value = value ?? "";
+  input.dataset.kind = "string";
+  const status = el("span", { class: "field-help" });
+  const picker = el("input", { type: "file", accept: "application/pdf,image/*" });
+  picker.addEventListener("change", () => busy(picker, async () => {
+    const file = picker.files[0];
+    if (!file) return;
+    status.textContent = `uploading ${file.name}...`;
+    try {
+      const meta = await api(`uploads?filename=${encodeURIComponent(file.name)}`, { method: "POST", body: file });
+      input.value = meta.id;
+      status.textContent = `${meta.filename || "file"} · ${meta.pages ? `${meta.pages} page${meta.pages > 1 ? "s" : ""}` : meta.content_type}`;
+      await previewLabel();
+    } catch (e) {
+      status.textContent = "";
+      throw e;
+    }
+  }));
+  return el("label", { class: "wide" }, title, el("div", { class: "file-row" }, picker, input), status, help);
 }
 
 function collectParams() {

@@ -12,28 +12,39 @@ from zeprint.zpl import get_size, render_preview
 
 CASES = [(cls, size, dpi) for cls in labels.all_labels() for size in cls.sizes
          for dpi in (203, 300, 600)]
+# labels whose defaults can't render on their own (they need the user's input)
+EXAMPLE_PARAMS = {
+    "address": {"to": "Jane Doe|1 Main St|Seattle, WA 98101", "sender": "Me|2 Elm St|Kirkland"},
+    "image": {"image": "label.png"},
+}
+
+
+def _open_file(ref):
+    from fakes import carrier_label_png
+    return carrier_label_png(812, 1218), {"filename": ref, "content_type": "image/png"}
 
 
 def ctx_for(cls_id, size="4x6", dpi=300, tmp_path=None):
     now = ISS_EPOCH_NOW if cls_id == "satellite" else NOW
     return RenderContext(get_size(size), dpi=dpi, tz=TZ, now=now, cache_dir=tmp_path,
-                         printer_name="Test Zebra")
+                         printer_name="Test Zebra", open_file=_open_file)
 
 
 @pytest.mark.parametrize("cls,size,dpi", CASES,
                          ids=[f"{c.id}-{s}-{d}" for c, s, d in CASES])
 def test_every_label_renders_in_bounds(cls, size, dpi, fake_net, tmp_path):
-    result = cls().render(cls.Params(), ctx_for(cls.id, size, dpi, tmp_path))
+    params = cls.Params(**EXAMPLE_PARAMS.get(cls.id, {}))
+    result = cls().render(params, ctx_for(cls.id, size, dpi, tmp_path))
     pw, ll = get_size(size).dots(dpi)
     assert f"^PW{pw}" in result.zpl and f"^LL{ll}" in result.zpl
     for x, y in re.findall(r"\^FO(\d+),(\d+)", result.zpl):
         assert 0 <= int(x) < pw and 0 <= int(y) < ll, (x, y)
-    assert render_preview(result.zpl).size == (pw, ll)
+    assert render_preview(result.zpl).size == (pw, ll)          # first label of the job
 
 
 def test_builtin_labels_registered():
     ids = {c.id for c in labels.all_labels()}
-    assert {"satellite", "tides", "topo", "weather", "test"} <= ids
+    assert {"satellite", "tides", "topo", "weather", "test", "address", "image"} <= ids
 
 
 # ------------------------------------------------------------------ satellite

@@ -264,7 +264,34 @@ def _draw_code128(d: ImageDraw.ImageDraw, x: int, y: int, data: str, module: int
         d.text((x + (modules * module - tw) / 2, y + h + 4), data, fill=0, font=f)
 
 
+def split_labels(zpl: str, limit: int = 20) -> list[str]:
+    """The individual ^XA..^XZ formats in a job (at most ``limit``)."""
+    out = []
+    for m in re.finditer(r"(.*?\^XZ)", zpl, flags=re.S | re.I):
+        if "^XA" in m.group(1).upper():
+            out.append(m.group(1))
+            if len(out) >= limit:
+                break
+    return out or [zpl]
+
+
+def render_all(zpl: str, default_size: tuple[int, int] = (1200, 1800),
+               limit: int = 20) -> Image.Image:
+    """Every label in the job, stacked top to bottom with a gap between them."""
+    images = [render(part, default_size) for part in split_labels(zpl, limit)]
+    if len(images) == 1:
+        return images[0]
+    gap = max(12, images[0].height // 20)
+    sheet = Image.new("L", (max(i.width for i in images),
+                            sum(i.height for i in images) + gap * (len(images) - 1)), 200)
+    y = 0
+    for img in images:
+        sheet.paste(img, (0, y))
+        y += img.height + gap
+    return sheet
+
+
 def render_png(zpl: str, default_size: tuple[int, int] = (1200, 1800)) -> bytes:
     buf = io.BytesIO()
-    render(zpl, default_size).save(buf, format="PNG", optimize=True)
+    render_all(zpl, default_size).save(buf, format="PNG", optimize=True)
     return buf.getvalue()

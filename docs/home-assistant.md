@@ -55,6 +55,27 @@ automation:
           topic: zeprint/print/weather
           payload: '{"hours_ahead": 12}'
 
+  - alias: Return address labels on demand (2x1)
+    triggers:
+      - trigger: state
+        entity_id: input_button.return_address_labels
+    actions:
+      - action: mqtt.publish
+        data:
+          topic: zeprint/print/address
+          payload: '{"include": "from", "size": "2x1", "copies": 10}'
+
+  - alias: Print a shipping label from a URL
+    # e.g. fired by a script that receives a label link from your shop
+    triggers:
+      - trigger: event
+        event_type: shipping_label_ready
+    actions:
+      - action: mqtt.publish
+        data:
+          topic: zeprint/print/image
+          payload: '{"image": "{{ trigger.event.data.url }}", "pages": "all"}'
+
   - alias: Tell me when the printer runs out of labels
     triggers:
       - trigger: state

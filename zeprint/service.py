@@ -15,13 +15,15 @@ from typing import Any, Callable
 
 from pydantic import BaseModel, ValidationError
 
-from . import labels
+from . import labels, net
 from .config import ConfigStore, PrinterConfig, Settings
-from .errors import InvalidRequest, NotFoundError, PrinterError
+from .errors import InvalidRequest, LabelError, NotFoundError, PrinterError
 from .events import EventBus
 from .jobs import Job, JobQueue
 from .labels import Label, RenderContext, RenderResult
 from .printing import open_transport, parse_host_identification, parse_host_status
+from .uploads import ID_RE as UPLOAD_ID_RE
+from .uploads import UploadStore, sniff
 from .zpl import SIZES, LabelSize, calibrate_zpl, get_size, render_png
 
 log = logging.getLogger(__name__)
@@ -48,6 +50,7 @@ class ZePrint:
         self.events = EventBus()
         self.config = ConfigStore(self.data_dir / "config.json", env)
         self.jobs = JobQueue(self.events)
+        self.uploads = UploadStore(self.data_dir / "uploads")
         labels.load_builtin()
         plugins = plugin_dir or env.get("ZEPRINT_PLUGIN_DIR") or self.data_dir / "plugins"
         self.plugins = labels.load_plugins(plugins)
@@ -199,7 +202,7 @@ class ZePrint:
             darkness=printer.darkness if printer else 22, speed=printer.speed if printer else 2,
             media=printer.media if printer else "direct", copies=copies,
             tz=self.config.timezone(), now=now or (self.clock() if self.clock else None),
-            cache_dir=self.cache_dir,
+            cache_dir=self.cache_dir, open_file=self.open_file,
             printer_name=printer.name if printer else None)
         if label.fetch_outside_lock:          # label takes ctx.drawing() around its plots
             return label.render(p, ctx)
@@ -209,6 +212,17 @@ class ZePrint:
     @staticmethod
     def preview_png(zpl: str) -> bytes:
         return render_png(zpl)
+
+    def open_file(self, ref: str) -> tuple[bytes, dict[str, Any]]:
+        """A label's file reference: an upload id, or an http(s) URL to fetch."""
+        ref = ref.strip()
+        if UPLOAD_ID_RE.match(ref):
+            return self.uploads.get(ref)
+        if ref.startswith(("http://", "https://")):
+            data = net.fetch(ref, timeout=30, ttl=300, max_bytes=self.uploads.max_bytes)
+            name = ref.split("?", 1)[0].rstrip("/").rsplit("/", 1)[-1] or None
+            return data, {"filename": name, "content_type": sniff(data), "url": ref}
+        raise LabelError("expected an upload id (POST /api/uploads) or an http(s) URL")
 
     # -------------------------------------------------------------- printing
 

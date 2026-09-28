@@ -83,8 +83,10 @@ class _TTLCache:
 cache = _TTLCache(CACHE_MAX_BYTES)
 
 
-def fetch(url: str, *, source: str | None = None, timeout: float = 20, ttl: float = 0) -> bytes:
-    """GET ``url``. ``ttl`` > 0 caches the body for that many seconds."""
+def fetch(url: str, *, source: str | None = None, timeout: float = 20, ttl: float = 0,
+          max_bytes: int | None = None) -> bytes:
+    """GET ``url``. ``ttl`` > 0 caches the body for that many seconds; ``max_bytes``
+    rejects larger bodies."""
     if ttl:
         hit = cache.get(url)
         if hit is not None:
@@ -94,7 +96,7 @@ def fetch(url: str, *, source: str | None = None, timeout: float = 20, ttl: floa
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     try:
         with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as r:
-            data = r.read()
+            data = r.read() if max_bytes is None else r.read(max_bytes + 1)
     except urllib.error.HTTPError as e:
         raise FetchError(f"{name} answered HTTP {e.code} ({e.reason}) for {url}") from e
     except (urllib.error.URLError, TimeoutError, OSError) as e:
@@ -103,6 +105,8 @@ def fetch(url: str, *, source: str | None = None, timeout: float = 20, ttl: floa
             raise FetchError(f"TLS certificate verification failed reaching {name} ({reason})") from e
         raise FetchError(f"could not reach {name} ({reason}); check that this host's network "
                          f"and DNS allow {host}") from e
+    if max_bytes is not None and len(data) > max_bytes:
+        raise FetchError(f"{name} sent more than {max_bytes >> 20} MiB for {url}")
     if ttl:
         cache.put(url, data, ttl)
     return data
